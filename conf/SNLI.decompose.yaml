@@ -4,11 +4,12 @@ model:
 
 data:
   name: SNLI
+  embedding: GloVe
   preproc: Tokenize
 
 train:
   validate: False
   learning_rate: 0.05
-  epoch_num: 50
+  epoch_num: 500
   batch_size: 512
   keep_prob: 0.8

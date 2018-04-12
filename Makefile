@@ -12,16 +12,16 @@ test:
 
 # Use conda to manage the dependency if applicable
 download: data/ASS data/MSRP data/WikiQA data/SemEval
-	hash conda > /dev/null && while read requirement; do conda install --yes "$$requirement"; done < requirements.txt > /dev/null 2>&1
-	$(PYTHON) -m pip install -qr requirements.txt
-	$(PYTHON) -m nltk.downloader punkt
-	$(PYTHON) -m spacy download en_vectors_web_lg
+	#hash conda > /dev/null && while read requirement; do conda install --yes "$$requirement"; done < requirements.txt > /dev/null 2>&1
+	#$(PYTHON) -m pip install -qr requirements.txt
+	#$(PYTHON) -m nltk.downloader punkt
+	#$(PYTHON) -m spacy download en_vectors_web_lg
 
 data/ASS:
 	scripts/download_ASS     data
 
 data/MSRP:
-	scripts/dwnload_MSRP     data
+	scripts/download_MSRP    data
 
 data/WikiQA:
 	scripts/download_WikiQA  data

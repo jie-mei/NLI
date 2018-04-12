@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
+import os
 from typing import Dict, Set
 
 import gensim
+from gensim.scripts.glove2word2vec import glove2word2vec
 import numpy as np
 import spacy
 
@@ -48,14 +50,13 @@ class IndexedWordEmbedding(WordEmbedding):
         return self.get_embedding(self.get_id(word))
 
 
-class Word2Vec(WordEmbedding):
-    PRETRAINED_PATH = '~/data/GoogleNews-vectors-negative300.bin'
+class PretrainedEmbedding(WordEmbedding):
 
-    def __init__(self, pretrained=PRETRAINED_PATH):
-        super(Word2Vec, self).__init__(300)
+    def __init__(self, path, dim):
+        super(PretrainedEmbedding, self).__init__(dim)
         self.model = (gensim.models.KeyedVectors
-                .load_word2vec_format(pretrained, binary=True))
-        self.unknowns = np.random.uniform(-0.01, 0.01, 300).astype("float32")
+                .load_word2vec_format(path))
+        self.unknowns = np.random.uniform(-1., 1., self.dim).astype("float32")
 
     def get(self, word):
         if word not in self.model.vocab:
@@ -64,7 +65,22 @@ class Word2Vec(WordEmbedding):
             return self.model.word_vec(word)
 
 
-class GloVe(WordEmbedding):
+class Word2Vec(PretrainedEmbedding):
+    def __init__(self, path='/home/jmei/data/GoogleNews-vectors-negative300.bin',
+            dim=300):
+        super(Word2Vec, self).__init__(path, dim, binary)
+
+
+class GloVe(PretrainedEmbedding):
+    def __init__(self, path='/home/jmei/data/glove.840B.300d.txt', dim=300):
+        # Preprocess the original GloVe data to allow using the gensim API.
+        gensim_path = '{}.gensim.txt'.format(path[:-4])
+        if not os.path.exists(gensim_path):
+            glove2word2vec(path, gensim_path)
+        super(GloVe, self).__init__(gensim_path, dim)
+
+
+class SpacyGloVe(WordEmbedding):
     def __init__(self):
         super(GloVe, self).__init__(300)
         self.nlp = spacy.load('en_vectors_web_lg')

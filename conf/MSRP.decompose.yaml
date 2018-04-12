@@ -1,9 +1,10 @@
 model:
-  name: MSRP.decompose.norm.mask.rglz1e-3
-  class_num: 3
+  name: MSRP.decompose.Glove.norm.mask
+  class_num: 2
 
 data:
   name: MSRP
+  embedding: GloVe
   preproc: Tokenize
 
 train:

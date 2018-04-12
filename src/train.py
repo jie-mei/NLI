@@ -37,8 +37,7 @@ def train(name: str,
           learning_rate: float = 0.02,
           data_name: str = 'MSRP',
           data_preproc: str = 'Tokenize',
-          embedding: str = 'Word2Vec',
-          validate: bool = True,
+          data_embedding: str = 'Word2Vec', validate: bool = True,
           **kwargs
           ) -> None:
 
@@ -46,8 +45,8 @@ def train(name: str,
     model_path = build.get_model_path(name)
     print('save path:', build.get_save_path(model_path))
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
-    train_data = data.load(data_name, 'train', data_preproc, embedding, batch_size)
-    valid_data = data.load(data_name, 'validation', data_preproc, embedding)
+    train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
+    valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
     valid_data.reset_max_len(train_data.max_len)
 
     # Network setup

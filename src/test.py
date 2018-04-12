@@ -101,7 +101,7 @@ def test(name: str,
          mode: str = 'test',
          data_name: str = 'MSRP',
          data_preproc: str = 'Tokenize',
-         embedding: str = 'Word2Vec',
+         data_embedding: str = 'Word2Vec',
          load: bool = True,
          visualize: bool = False,
          softmax: bool = False,
@@ -111,7 +111,7 @@ def test(name: str,
     print(data_name, mode)
     print(kwargs)
     model_path = build.get_model_path(name)
-    test_data = data.load(data_name, mode, data_preproc, embedding, 1)
+    test_data = data.load(data_name, mode, data_preproc, data_embedding, 1)
     test_data.reset_max_len(41)  # TODO
 
     model = nn.Decomposeable(word_embeddings=test_data.embeds,

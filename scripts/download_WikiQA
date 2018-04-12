@@ -1,0 +1,25 @@
+#!/bin/bash
+#
+# Download the Microsoft Research WikiQA Corpus (wikiQA) and extract the
+# following files to the output directory.
+#
+#   * WikiQA-train.tsv
+#   * WikiQA-dev.tsv
+#   * WikiQA-test.tsv
+#
+# Arguments:
+#   1. The output directory (default: .)
+#
+# Author: Jie Mei
+
+DOWNLOAD_URL='https://download.microsoft.com/download/E/5/F/E5FCFCEE-7005-4814-853D-DAA7C66507E0/WikiQACorpus.zip'
+FILES=('WikiQA-train.tsv' 'WikiQA-dev.tsv' 'WikiQA-test.tsv')
+OUTPUT_DIR="${1:-.}"
+
+mkdir -p '.temp' "${OUTPUT_DIR}/WikiQA"
+curl -s -o ".temp/WikiQACorpus.zip" "${DOWNLOAD_URL}"
+for file in "${FILES[@]}"; do
+  unzip -p ".temp/WikiQACorpus.zip" "WikiQACorpus/${file}" > "${OUTPUT_DIR}/WikiQA/${file}"
+done
+rm -r '.temp'
+

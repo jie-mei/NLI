@@ -1,0 +1,14 @@
+model:
+  name: SNLI.decompose
+  class_num: 3
+
+data:
+  name: SNLI
+  preproc: Tokenize
+
+train:
+  validate: False
+  learning_rate: 0.05
+  epoch_num: 50
+  batch_size: 512
+  keep_prob: 0.8

@@ -1,0 +1,13 @@
+model:
+  name: MSRP.decompose.norm.mask.rglz1e-3
+  class_num: 3
+
+data:
+  name: MSRP
+  preproc: Tokenize
+
+train:
+  learning_rate: 0.05
+  epoch_num: 3000
+  batch_size: 512
+  keep_prob: 0.5

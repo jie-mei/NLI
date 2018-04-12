@@ -1,0 +1,28 @@
+#!/bin/bash
+#
+# Download the Microsoft Research Paraphrase Corpus (MSRP). Since the original
+# download link provides .msi file which is not directly usable for non-Windows
+# environments. We alternatively download from Github repo 'brmson/dataset-sts'.
+# To be consistent, this script rename the downloaded data files to the
+# following names:
+#
+#   * MSRP-train.txt
+#   * MSRP-dev.txt
+#   * MSRP-test.txt
+#
+# Arguments:
+#   1. The output directory (default: .)
+#
+# Author: Jie Mei
+
+OUTPUT_DIR="${1:-.}"
+NAME_AND_URL=(
+    'MSRP-train.tsv' 'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/para/msr/msr-para-train.tsv'
+    'MSRP-dev.tsv'   'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/para/msr/msr-para-val.tsv'
+    'MSRP-test.tsv'  'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/para/msr/msr-para-test.tsv'
+    )
+
+mkdir -p "${OUTPUT_DIR}/MSRP"
+for (( i=0; i<${#NAME_AND_URL[@]}; i+=2 )); do
+  curl -s "${NAME_AND_URL[i+1]}" > "${OUTPUT_DIR}/MSRP/${NAME_AND_URL[i]}"
+done

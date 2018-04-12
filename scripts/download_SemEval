@@ -1,0 +1,30 @@
+#!/bin/bash
+#
+# Download the SemEval Short Text Similarity Corpus (MSRP).  We download a
+# preprocessed verson from Github repo 'brmson/dataset-sts'. To be consistent,
+# this script rename the downloaded data files to the following names:
+#
+#   * SemEval-2016.answer-answer.test.tsv
+#   * SemEval-2016.headlines.test.tsv
+#   * SemEval-2016.postediting.test.tsv
+#   * SemEval-2016.plagiarism.test.tsv
+#   * SemEval-2016.question-question.test.tsv
+#
+# Arguments:
+#   1. The output directory (default: .)
+#
+# Author: Jie Mei
+
+OUTPUT_DIR="${1:-.}"
+NAME_AND_URL=(
+    'SemEval-2016.answer-answer.test.tsv'     'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/sts/semeval-sts/2016/answer-answer.test.tsv'
+    'SemEval-2016.headlines.test.tsv'         'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/sts/semeval-sts/2016/headlines.test.tsv'
+    'SemEval-2016.postediting.test.tsv'       'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/sts/semeval-sts/2016/postediting.test.tsv'
+    'SemEval-2016.plagiarism.test.tsv'        'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/sts/semeval-sts/2016/plagiarism.test.tsv'
+    'SemEval-2016.question-question.test.tsv' 'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/sts/semeval-sts/2016/question-question.test.tsv'
+    )
+
+mkdir -p "${OUTPUT_DIR}/SemEval"
+for (( i=0; i<${#NAME_AND_URL[@]}; i+=2 )); do
+  curl -s "${NAME_AND_URL[i+1]}" > "${OUTPUT_DIR}/SemEval/${NAME_AND_URL[i]}"
+done

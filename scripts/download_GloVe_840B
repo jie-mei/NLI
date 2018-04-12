@@ -1,0 +1,26 @@
+#!/bin/bash
+#
+# Download the Answer Sentence Selection Dataset (Ass). We download a
+# preprocessed verson from Github repo 'brmson/dataset-sts'. To be consistent,
+# this script rename the downloaded data files to the following names:
+#
+#   * ASS-train.tsv
+#   * ASS-dev.tsv
+#   * ASS-test.tsv
+#
+# Arguments:
+#   1. The output directory (default: .)
+#
+# Author: Jie Mei
+
+OUTPUT_DIR="${1:-.}"
+NAME_AND_URL=(
+    'ASS-train.tsv' 'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/anssel/wang/train-all.csv'
+    'ASS-dev.tsv'   'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/anssel/wang/dev.csv'
+    'ASS-test.tsv'  'https://raw.githubusercontent.com/brmson/dataset-sts/master/data/anssel/wang/test.csv'
+    )
+
+mkdir -p "${OUTPUT_DIR}/ASS"
+for (( i=0; i<${#NAME_AND_URL[@]}; i+=2 )); do
+  curl -s "${NAME_AND_URL[i+1]}" > "${OUTPUT_DIR}/ASS/${NAME_AND_URL[i]}"
+done

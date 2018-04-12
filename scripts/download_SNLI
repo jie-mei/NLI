@@ -1,0 +1,36 @@
+#!/bin/bash
+#
+# Download the Stanford Natural Language Inference (SNLI) Corpus ver. 1.0. To be
+# consistent, this script rename the downloaded data files to the following
+# names:
+#
+#   * SNLI-train.tsv
+#   * SNLI-dev.tsv
+#   * SNLI-test.tsv
+#
+# Arguments:
+#   1. The output directory (default: .)
+#
+# Author: Jie Mei
+
+OUTPUT_DIR="${1:-.}"
+DOWNLOAD_NAME='snli_1.0.zip'
+UNZIP_NAME='snli_1.0'
+URL="https://nlp.stanford.edu/projects/snli/${DOWNLOAD_NAME}"
+DOWNLOAD_PATH="${OUTPUT_DIR}/${DOWNLOAD_NAME}"
+UNZIP_PATH="${OUTPUT_DIR}/${UNZIP_NAME}"
+SNLI_PATH="${OUTPUT_DIR}/SNLI"
+
+mkdir -p "${OUTPUT_DIR}"
+if [ ! -d "${SNLI_PATH}" ]; then
+  if [ ! -f "${DOWNLOAD_PATH}" ]; then
+    curl -sS "${URL}" > "${DOWNLOAD_PATH}"
+  fi
+  unzip -d "${OUTPUT_DIR}" "${DOWNLOAD_PATH}"
+  rm -rf "${OUTPUT_DIR}/__MACOSX"
+  mv "${OUTPUT_DIR}/${UNZIP_NAME}" "${OUTPUT_DIR}/SNLI"
+  ln -s "snli_1.0_train.txt" "${SNLI_PATH}/SNLI-train.tsv" 
+  ln -s "snli_1.0_dev.txt" "${SNLI_PATH}/SNLI-dev.tsv" 
+  ln -s "snli_1.0_test.txt" "${SNLI_PATH}/SNLI-test.tsv" 
+  rm "${DOWNLOAD_PATH}"
+fi

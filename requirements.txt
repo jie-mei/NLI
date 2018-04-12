@@ -1,0 +1,8 @@
+gensim
+loggy
+nltk
+scikit-learn
+spacy
+tensorflow-gpu
+tqdm
+pyyaml

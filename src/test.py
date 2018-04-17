@@ -48,6 +48,11 @@ def evaluate(session: tf.Session,
 
 
 @print_section
+def _print_number_of_variables(model):
+    print("Total Variables: %d" % model.count_parameters())
+
+
+@print_section
 def evaluate_vis(session: tf.Session,
              model: nn.Model,
              dataset: data.Dataset,
@@ -118,6 +123,7 @@ def test(name: str,
                              seq_len=test_data.max_len,
                              **kwargs)
     _print_model_setup(model)
+    _print_number_of_variables(model)
 
     config = tf.ConfigProto()
     config.gpu_options.allow_growth=True
@@ -168,5 +174,8 @@ if __name__ == "__main__":
     # arguments can override ones parsed from file.
     kwargs = parse.parse_args(sys.argv)
     if 'file' in kwargs:
+        # Use the file name as the default model name.
+        fname = os.path.basename(kwargs['file'])
+        kwargs['name'] = fname[:fname.rfind('.')]
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='test'), **kwargs}
     test(**kwargs)

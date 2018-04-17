@@ -10,15 +10,16 @@ import shutil
 import embed
 import data
 import nn
-from util import build, parse
+from util import build, parse, graph
 from util.annotation import print_section
 
 
 @print_section
 def _print_trainable_variables():
-    print("List of Variables:")
-    for v in tf.trainable_variables():
-        print(v.name)
+    graph.print_trainable_variables()
+    #print("List of Variables:")
+    #for v in tf.trainable_variables():
+    #    print(v.name)
 
 
 @print_section
@@ -34,12 +35,13 @@ def _print_model_setup(model):
 def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
-          learning_rate: float = 0.02,
+          learning_rate: float = 0.05,
           data_name: str = 'MSRP',
           data_preproc: str = 'Tokenize',
           data_embedding: str = 'Word2Vec', validate: bool = True,
           **kwargs
           ) -> None:
+    print(kwargs)
 
     # Data preparation
     model_path = build.get_model_path(name)
@@ -72,7 +74,9 @@ def train(name: str,
     train_summary = tf.summary.merge_all()
 
     # Optimization
-    optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
+    #optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
+    #        .minimize(model.loss))
+    optimizer = (tf.train.AdamOptimizer(name="optimizer")
             .minimize(model.loss))
 
     init = tf.global_variables_initializer()
@@ -125,5 +129,8 @@ if __name__ == "__main__":
     # arguments can override ones parsed from file.
     kwargs = parse.parse_args(sys.argv)
     if 'file' in kwargs:
+        # Use the file name as the default model name.
+        fname = os.path.basename(kwargs['file'])
+        kwargs['name'] = fname[:fname.rfind('.')]
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='train'), **kwargs}
     train(**kwargs)

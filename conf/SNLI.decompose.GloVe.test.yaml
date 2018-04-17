@@ -1,15 +1,13 @@
 model:
-  name: SNLI.decompose
   class_num: 3
 
 data:
   name: SNLI
-  embedding: GloVe
   preproc: Tokenize
+  embedding: GloVe
 
 train:
   validate: False
-  learning_rate: 0.05
-  epoch_num: 500
-  batch_size: 512
+  epoch_num: 100
+  batch_size: 64
   keep_prob: 0.8

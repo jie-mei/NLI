@@ -1,0 +1,16 @@
+# test:  78.07
+
+model:
+  class_num: 3
+  intra_attention: True
+
+data:
+  name: SNLI
+  preproc: Tokenize
+  embedding: GloVe
+
+train:
+  validate: False
+  epoch_num: 100
+  batch_size: 64
+  keep_prob: 0.8

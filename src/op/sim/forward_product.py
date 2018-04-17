@@ -11,7 +11,6 @@ def forward_product(
         scope: Union[str, tf.VariableScope] = None,
         **kwargs,
         ):
-    pass
     """
     Inputs:
         3-D Tensor [batch, seq_len_1, embed_dim]
@@ -21,7 +20,7 @@ def forward_product(
         3-D Tensor [batch, seq_len_1, seq_len_2]
     """
     scope = scope if scope else 'forward_production'
-    forward = lambda x: op.fc(x, scope=scope, **kwargs)
-    sim = tf.expand_dims(forward(x1), 2) * tf.expand_dims(forward(x1), 1)
+    forward = lambda x: op.forward(x, scope=scope, **kwargs)
+    sim = tf.expand_dims(forward(x1), 2) * tf.expand_dims(forward(x2), 1)
     sim = tf.reduce_sum(sim, axis=3)
     return sim

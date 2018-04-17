@@ -52,11 +52,11 @@ class IndexedWordEmbedding(WordEmbedding):
 
 class PretrainedEmbedding(WordEmbedding):
 
-    def __init__(self, path, dim):
+    def __init__(self, path, dim, binary):
         super(PretrainedEmbedding, self).__init__(dim)
-        self.model = (gensim.models.KeyedVectors
-                .load_word2vec_format(path))
-        self.unknowns = np.random.uniform(-1., 1., self.dim).astype("float32")
+        self.model = gensim.models.KeyedVectors.load_word2vec_format(path,
+                binary=binary)
+        self.unknowns = np.random.uniform(-0.1, 0.1, self.dim).astype("float32")
 
     def get(self, word):
         if word not in self.model.vocab:
@@ -66,18 +66,23 @@ class PretrainedEmbedding(WordEmbedding):
 
 
 class Word2Vec(PretrainedEmbedding):
-    def __init__(self, path='/home/jmei/data/GoogleNews-vectors-negative300.bin',
-            dim=300):
+    def __init__(self,
+                 path='/home/jmei/data/GoogleNews-vectors-negative300.bin',
+                 dim=300,
+                 binary=True):
         super(Word2Vec, self).__init__(path, dim, binary)
 
 
 class GloVe(PretrainedEmbedding):
-    def __init__(self, path='/home/jmei/data/glove.840B.300d.txt', dim=300):
+    def __init__(self,
+                 path='/home/jmei/data/glove.840B.300d.txt',
+                 dim=300,
+                 binary=False):
         # Preprocess the original GloVe data to allow using the gensim API.
         gensim_path = '{}.gensim.txt'.format(path[:-4])
         if not os.path.exists(gensim_path):
             glove2word2vec(path, gensim_path)
-        super(GloVe, self).__init__(gensim_path, dim)
+        super(GloVe, self).__init__(gensim_path, dim, binary)
 
 
 class SpacyGloVe(WordEmbedding):

@@ -1,5 +1,6 @@
 model:
   class_num: 3
+  intra_attention: True
 
 data:
   name: SNLI

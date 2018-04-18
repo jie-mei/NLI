@@ -37,9 +37,9 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         with tf.variable_scope('embed') as s:
             embed = lambda x: op.embedding(x, word_embeddings, normalize=True)
             x1, x2 = map(lambda x: embed(x), [self.x1, self.x2])
+            project = lambda x: self.linear(x, self.project_dim)
+            x1, x2 = map(lambda x: project(x), [x1, x2])
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
-            x1 = self.forward(x1, dim=self.project_dim, scope='project_x1')
-            x2 = self.forward(x2, dim=self.project_dim, scope='project_x2')
 
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
@@ -48,48 +48,70 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             beta  = tf.einsum('bik,bkj->bij', op.softmax(sim, axis=2), x2)
         
         with tf.variable_scope('compare') as s:
-            v1 = self.forward(tf.concat([x1, beta ], 2), scope='compare_x1')
-            v2 = self.forward(tf.concat([x2, alpha], 2), scope='compare_x2')
+            v1 = self.forward(tf.concat([x1, beta ], 2))
+            v2 = self.forward(tf.concat([x2, alpha], 2))
 
         with tf.variable_scope('aggregate') as s:
             v1 = tf.reduce_sum(v1 * mask1, axis=1)
             v2 = tf.reduce_sum(v2 * mask2, axis=1)
-            y_hat = self.forward(tf.concat([v1, v2], 1), dim=class_num)
+            y_hat = self.forward(tf.concat([v1, v2], 1))
+            y_hat = self.linear(y_hat, dim=class_num)
 
         self.evaluate_and_loss(y_hat)
 
 
-    def forward(self,
+    def _linear(self,
             inputs: tf.Tensor,
             dim: int = -1,
+            keep_prob: float = None,
             activation_fn: Callable = tf.nn.relu,
             weight_stddev: float = 0.01,
+            bias: bool = True,
             scope: Union[str, tf.VariableScope] = None,
-            reuse: bool = False,
+            reuse: bool = tf.AUTO_REUSE,
             ):
         """
         Inputs:  [batch, seq_len, input_dim]
         Returns: [batch, seq_len, dim]
         """
-        scope = scope if scope else 'forward'
+        scope = scope if scope else 'linear'
+        keep_prob = keep_prob if keep_prob else self.keep_prob
         dim = dim if dim > 0 else int(inputs.shape[-1])
-        t = tf.nn.dropout(inputs, self.keep_prob)
-        t = tf.contrib.layers.fully_connected(inputs, dim,
+        bias_init = tf.constant_initializer(0) if bias else None
+        t = tf.nn.dropout(inputs, keep_prob)
+        t = tf.contrib.layers.fully_connected(t, dim,
                 activation_fn=None,
                 weights_initializer=tf.initializers.truncated_normal(
                         stddev=weight_stddev),
-                biases_initializer=None,
+                biases_initializer=bias_init,
                 scope=scope,
                 reuse=reuse)
         t = activation_fn(t) if activation_fn else t
         return t
 
 
+    def linear(self, inputs: tf.Tensor, dim: int):
+        return self._linear(inputs, dim,
+                keep_prob=1.0,
+                activation_fn=None,
+                bias=False)
+
+
+    def forward(self, 
+            inputs: tf.Tensor,
+            scope: Union[str, tf.VariableScope] = None,
+            ):
+        scope = scope if scope else 'forward'
+        with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+            t = self._linear(inputs, self.project_dim, scope='linear-1')
+            t = self._linear(t, scope='linear-2')
+            return t
+
+
     def attention(self,
             x1: tf.Tensor,
             x2: tf.Tensor,
             scope: Union[str, tf.VariableScope] = None,
-            **kwargs,
             ):
         """
         Inputs:  [batch, seq_len_1, embed_dim]
@@ -97,8 +119,8 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
-            sim = (tf.expand_dims(self.forward(x1, **kwargs), 2) *
-                   tf.expand_dims(self.forward(x2, **kwargs), 1))
+            sim = (tf.expand_dims(self.forward(x1), 2) *
+                   tf.expand_dims(self.forward(x2), 1))
             sim = tf.reduce_sum(sim, axis=3)
             return sim
 

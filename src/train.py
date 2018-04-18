@@ -38,7 +38,8 @@ def train(name: str,
           learning_rate: float = 0.05,
           data_name: str = 'MSRP',
           data_preproc: str = 'Tokenize',
-          data_embedding: str = 'Word2Vec', validate: bool = True,
+          data_embedding: str = 'Word2Vec',
+          validate: bool = True,
           **kwargs
           ) -> None:
     print(kwargs)

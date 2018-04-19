@@ -2,6 +2,7 @@
 
 import os
 import sys
+import time
 
 import tensorflow as tf
 import tqdm
@@ -49,12 +50,14 @@ def train(name: str,
     print('save path:', build.get_save_path(model_path))
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
     train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
+    train_data.create_tf_dataset()
     valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
+    valid_data.create_tf_dataset()
     valid_data.reset_max_len(train_data.max_len)
 
     # Network setup
     model = nn.Decomposeable(word_embeddings=train_data.embeds,
-                             seq_len=train_data.max_len,
+                             seq_len=40, dataset=train_data,
                              **kwargs)
     _print_model_setup(model)
     _print_trainable_variables()
@@ -72,13 +75,13 @@ def train(name: str,
     # Plot all the parameters in tensorboard
     for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
         tf.summary.histogram(name=v.name.replace(':','_'), values=v)
-    train_summary = tf.summary.merge_all()
 
     # Optimization
     #optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
     #        .minimize(model.loss))
-    optimizer = (tf.train.AdamOptimizer(name="optimizer")
-            .minimize(model.loss))
+    optimizer = get_train_op(model.loss, lr=learning_rate, clip_gradients=None)
+
+    train_summary = tf.summary.merge_all()
 
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()
@@ -91,35 +94,53 @@ def train(name: str,
             valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
         sess.run(init)
         step = 0
-        for e in range(1, epoch_num + 1):
+        for e in tqdm.tqdm(range(1, epoch_num + 1)):
             # Training
             desc = 'Epoch {num:{w}}'.format(num=e, w=len(str(epoch_num)))
-            pbar = tqdm.trange(train_data.num_batches(), unit='bts', desc=desc)
-            train_data.reset_index()
-            for i in pbar:
-                x1, x2, y = train_data.next_batch()
-                summary, _, loss = sess.run(
-                        [train_summary, optimizer, model.loss],
-                        feed_dict={model.x1: x1, model.x2: x2, model.y: y},
-                        #options=tf.RunOptions(
-                        #        trace_level=tf.RunOptions.FULL_TRACE),
-                        #run_metadata=run_metadata
+            sess.run(train_data.initializer)
+            while True:
+                try:
+                    _ = sess.run(
+                        [optimizer],
                         )
-                pbar.set_postfix(loss='{:.3f}'.format(loss))
-                train_wtr.add_summary(summary, step)
+                    if step % 100 == 0:
+                        summary, _, loss = sess.run(
+                            [train_summary, optimizer, model.loss],
+                            )
+                        train_wtr.add_summary(summary, step)
+                except tf.errors.OutOfRangeError:
+                    break
+
                 #train_wtr.add_run_metadata(run_metadata, 'step%05d' % step)
                 step += 1
 
-            if validate:
-                valid_data.reset_index()
-                x1, x2, y = valid_data.next_batch()
-                summary, = sess.run([valid_summary],
-                        feed_dict={model.x1: x1, model.x2: x2, model.y: y})
-                valid_wtr.add_summary(summary, step)
-                valid_wtr.flush()
-        save_path = (tf.train.Saver(max_to_keep=100)
+#            if validate:
+#                valid_data.reset_index()
+#                x1, x2, y = valid_data.next_batch()
+#                summary, = sess.run([valid_summary],
+#                        feed_dict={model.x1: x1, model.x2: x2, model.y: y})
+#                valid_wtr.add_summary(summary, step)
+#                valid_wtr.flush()
+            save_path = (tf.train.Saver(max_to_keep=2)
                 .save(sess, build.get_save_path(model_path), global_step=e))
         print("model saved as", save_path)
+
+def get_train_op(loss, lr=0.01, clip_gradients=None):
+#    optimizer = tf.train.AdamOptimizer(lr)
+    optimizer = tf.train.AdagradOptimizer(lr)
+    tvars = tf.trainable_variables()
+    grads = tf.gradients(loss, tvars)
+
+    if clip_gradients is not None:
+        grads, _ = tf.clip_by_global_norm(grads, clip_gradients)
+
+    for g in grads:
+        tf.summary.histogram(g.name, g)
+
+    train_op = optimizer.apply_gradients(
+        zip(grads, tvars),
+        global_step=tf.train.get_global_step())
+    return train_op
 
 
 if __name__ == "__main__":

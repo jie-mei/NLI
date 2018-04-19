@@ -37,13 +37,15 @@ def evaluate(session: tf.Session,
                   List[List[float]],
                   List[List[float]]]:
     preds = []  # type: List[Union[int, float]]
-    for i in tqdm.trange(dataset.data_size, unit='instance', desc=title):
-        x1, x2, y = dataset.next_batch()
-        pred = session.run(
-                [model.prediction],
-                feed_dict={model.x1: x1, model.x2: x2, model.y: y})
-        preds += np.squeeze(pred).tolist(),
-    x1_atts, x2_atts, x1_sals, x2_sals = [[1] * len(preds) for _ in range(4)]
+    session.run(dataset.initializer)
+    while True:
+        try:
+            pred = session.run(
+                [model.prediction])
+            preds += np.squeeze(pred).tolist(),
+            x1_atts, x2_atts, x1_sals, x2_sals = [[1] * len(preds) for _ in range(4)]
+        except tf.errors.OutOfRangeError:
+            break
     return preds, x1_atts, x2_atts, x1_sals, x2_sals
 
 
@@ -117,10 +119,12 @@ def test(name: str,
     print(kwargs)
     model_path = build.get_model_path(name)
     test_data = data.load(data_name, mode, data_preproc, data_embedding, 1)
-    test_data.reset_max_len(41)  # TODO
+    test_data.reset_max_len(40)  # TODO
+    test_data.create_tf_dataset(shuffle=False)
 
     model = nn.Decomposeable(word_embeddings=test_data.embeds,
                              seq_len=test_data.max_len,
+                             dataset=test_data,
                              **kwargs)
     _print_model_setup(model)
     _print_number_of_variables(model)
@@ -164,6 +168,7 @@ def test(name: str,
         y_trues += gt, 
         y_preds += pred,
     print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
+    exit()
     print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
 
 

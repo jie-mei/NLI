@@ -7,6 +7,7 @@ from typing import List, Set, Tuple, Generator, Union
 
 import numpy as np
 import nltk
+import tensorflow as tf
 
 import embed
 from util import build
@@ -70,6 +71,27 @@ class Dataset(ABC):
         self.s1s, self.s2s = np.array(self.s1s), np.array(self.s2s)
         self.w1s, self.w2s = np.array(self.w1s), np.array(self.w2s)
         self.labels = np.array(self.labels)
+
+    def create_tf_dataset(self, shuffle_buffer_size=10240, shuffle=True, repeat_num=1, truncated_seq=40):
+        if truncated_seq is not None:
+            self.x1s = self.x1s[:, :truncated_seq]
+            self.x2s = self.x2s[:, :truncated_seq]
+        np_data_slices = (self.x1s, self.x2s, self.labels)
+        dataset = tf.data.Dataset.from_tensor_slices(np_data_slices)
+        dataset = dataset.batch(self.batch_size)
+        if shuffle:
+            dataset = dataset.shuffle(buffer_size=10240)
+        self.dataset = dataset.repeat(repeat_num)
+
+        self.iterator = tf.data.Iterator.from_structure(
+            self.dataset.output_types, self.dataset.output_shapes)
+        tensors = self.iterator.get_next()
+        x1, x2, y = tensors
+        self.x1 = tf.cast(x1, tf.int32)
+        self.x2 = tf.cast(x2, tf.int32)
+        self.y = tf.cast(y, tf.int32)
+
+        self.initializer = self.iterator.make_initializer(self.dataset)
 
     @classmethod
     def __load_indexed_word_embedding(cls,

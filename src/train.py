@@ -36,7 +36,7 @@ def _print_model_setup(model):
 def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
-          learning_rate: float = 0.05,
+          learning_rate: float = 0.02,
           data_name: str = 'MSRP',
           data_preproc: str = 'Tokenize',
           data_embedding: str = 'Word2Vec',
@@ -44,20 +44,22 @@ def train(name: str,
           **kwargs
           ) -> None:
     print(kwargs)
+    model_name = kwargs.get('model_name', 'model')
 
     # Data preparation
-    model_path = build.get_model_path(name)
+    model_path = build.get_model_path(name, model_name)
     print('save path:', build.get_save_path(model_path))
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
     train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
-    train_data.create_tf_dataset()
+    train_data.create_tf_dataset(shuffle_buffer_size=20480)
     valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
-    valid_data.create_tf_dataset()
+    valid_data.create_tf_dataset(shuffle=False)
     valid_data.reset_max_len(train_data.max_len)
 
     # Network setup
     model = nn.Decomposeable(word_embeddings=train_data.embeds,
-                             seq_len=40, dataset=train_data,
+                             dataset=train_data,
+                             train_mode=True,
                              **kwargs)
     _print_model_setup(model)
     _print_trainable_variables()
@@ -79,7 +81,11 @@ def train(name: str,
     # Optimization
     #optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
     #        .minimize(model.loss))
-    optimizer = get_train_op(model.loss, lr=learning_rate, clip_gradients=None)
+    global_step = tf.Variable(0, trainable=False)
+    starter_learning_rate = learning_rate
+    learning_rate = tf.train.exponential_decay(starter_learning_rate, global_step,
+                                           10000, 0.995, staircase=True)
+    optimizer = get_train_op(model.loss, lr=learning_rate, clip_gradients=None, optimizer_name='adagrad', global_step=global_step)
 
     train_summary = tf.summary.merge_all()
 
@@ -122,12 +128,17 @@ def train(name: str,
 #                valid_wtr.add_summary(summary, step)
 #                valid_wtr.flush()
             save_path = (tf.train.Saver(max_to_keep=2)
-                .save(sess, build.get_save_path(model_path), global_step=e))
+                .save(sess, build.get_save_path(model_path), global_step=epoch_num))
         print("model saved as", save_path)
 
-def get_train_op(loss, lr=0.01, clip_gradients=None):
-#    optimizer = tf.train.AdamOptimizer(lr)
-    optimizer = tf.train.AdagradOptimizer(lr)
+def get_train_op(loss, lr=0.01, clip_gradients=None, optimizer_name='adam', global_step=None):
+    if optimizer_name == 'adam':
+        optimizer = tf.train.AdamOptimizer(lr)
+    elif optimizer_name == 'adagrad':
+        optimizer = tf.train.AdagradOptimizer(lr)
+    else:
+        raise ValueError('invalid optimizer name')
+
     tvars = tf.trainable_variables()
     grads = tf.gradients(loss, tvars)
 
@@ -137,9 +148,12 @@ def get_train_op(loss, lr=0.01, clip_gradients=None):
     for g in grads:
         tf.summary.histogram(g.name, g)
 
+    if global_step is None:
+        global_step = tf.train.get_global_step()
+
     train_op = optimizer.apply_gradients(
         zip(grads, tvars),
-        global_step=tf.train.get_global_step())
+        global_step=global_step)
     return train_op
 
 

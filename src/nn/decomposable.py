@@ -10,19 +10,20 @@ from typing import Union, Callable
 class Decomposeable(SoftmaxCrossEntropyMixin, Model):
 
     def __init__(self,
-            seq_len: int,
             class_num: int,
             word_embeddings: np.ndarray,
             project_dim: int = 200,
             keep_prob: float = 1.0,
             intra_attention: bool = False,
             dataset=None,
+            train_mode=True,
             **kwargs,
             ) -> None:
-        self.seq_len = seq_len
+        self.seq_len = dataset.max_len
         self.keep_prob = keep_prob
         self.project_dim = project_dim
         self.intra_attention = intra_attention
+        self.train_mode = train_mode
 
         self.x1, self.x2, self.y = dataset.x1, dataset.x2, dataset.y
 
@@ -30,17 +31,14 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             # Explict masking the paddings.
             size = tf.count_nonzero(x, axis=1, dtype=tf.float32)
             mask = tf.sequence_mask(size, self.seq_len, dtype=tf.float32)
-            return tf.expand_dims(mask, -1), size
-        s1, s2 = map(mask, [self.x1, self.x2])
-        mask1, size1 = s1
-        mask2, size2 = s2
+            return tf.expand_dims(mask, -1)
+        mask1, mask2 = map(mask, [self.x1, self.x2])
 
         with tf.variable_scope('embed') as s:
-            embed = lambda x: op.embedding(x, word_embeddings, normalize=True)
+            embed = lambda x: op.embedding(x, word_embeddings, normalize=False)
             x1, x2 = map(lambda x: embed(x), [self.x1, self.x2])
-#            project = lambda x: self.linear(x, self.project_dim)
-#            x1, x2 = map(lambda x: project(x), [x1, x2])
-            x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
+            project = lambda x: self.linear(x, self.project_dim)
+            x1, x2 = map(lambda x: project(x), [x1, x2])
 
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
@@ -49,16 +47,24 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             beta = tf.matmul(tf.nn.softmax(sim), x2)
         
         with tf.variable_scope('compare') as s:
-#            v1 = self.conditionalBN(x1, beta)
-#            v2 = self.conditionalBN(x2, alpha)
-            v1 = self.forward(tf.concat([x1, beta ], 2))
-            v2 = self.forward(tf.concat([x2, alpha], 2))
+            num_layers = 2
+            num_nodes = [200] * num_layers
+            # num_nodes = [150] * num_layers
+            activations = [tf.nn.relu] * num_layers
+            biases = [True] * num_layers
+            v1 = self.forward(tf.concat([x1, beta ], 2), num_nodes, activations, biases)
+            v2 = self.forward(tf.concat([x2, alpha], 2), num_nodes, activations, biases)
 
         with tf.variable_scope('aggregate') as s:
-            v1 = tf.reduce_sum(v1, axis=1)
-            v2 = tf.reduce_sum(v2, axis=1)
-            y_hat = self.forward(tf.concat([v1, v2], 1))
-            y_hat = self._linear(y_hat, dim=class_num, activation_fn=None)
+            v1 = tf.reduce_sum(v1 * mask1, axis=1)
+            v2 = tf.reduce_sum(v2 * mask2, axis=1)
+
+            # v1 = tf.reduce_sum(v1, axis=1)
+            # v2 = tf.reduce_sum(v2, axis=1)
+            # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[200, 200, class_num], activations=[tf.nn.relu, tf.nn.relu, None], biases=[True, True, True])
+            # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[ True, True])
+            y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[True, True])
+            # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[class_num], activations=[None], biases=[True])
 
         self.evaluate_and_loss(y_hat)
 
@@ -72,6 +78,7 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             bias: bool = True,
             scope: Union[str, tf.VariableScope] = None,
             reuse: bool = tf.AUTO_REUSE,
+            regularizer = tf.contrib.layers.l2_regularizer(0.0001)
             ):
         """
         Inputs:  [batch, seq_len, input_dim]
@@ -81,34 +88,40 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         keep_prob = keep_prob if keep_prob else self.keep_prob
         dim = dim if dim > 0 else int(inputs.shape[-1])
         bias_init = tf.constant_initializer(0) if bias else None
-        t = tf.nn.dropout(inputs, keep_prob)
+        t = tf.layers.dropout(inputs, 1 - keep_prob, training=self.train_mode)
         t = inputs
         t = tf.contrib.layers.fully_connected(t, dim,
-                activation_fn=None,
+                activation_fn=activation_fn,
                 weights_initializer=tf.initializers.truncated_normal(
                         stddev=weight_stddev),
                 biases_initializer=bias_init,
+                weights_regularizer=regularizer,
+                biases_regularizer=regularizer,
                 scope=scope,
                 reuse=reuse)
-        t = activation_fn(t) if activation_fn else t
         return t
 
 
     def linear(self, inputs: tf.Tensor, dim: int):
         return self._linear(inputs, dim,
                 keep_prob=1.0,
+                # activation_fn=tf.nn.relu,
                 activation_fn=None,
-                bias=False)
+                bias=True)
 
 
     def forward(self, 
             inputs: tf.Tensor,
-            scope: Union[str, tf.VariableScope] = None,
+            num_nodes=[-1],
+            activations=[tf.nn.relu],
+            biases=[True],
+            scope: Union[str, tf.VariableScope] = None
             ):
         scope = scope if scope else 'forward'
+        t = inputs
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-            t = self._linear(inputs, self.project_dim, scope='linear-1')
-            t = self._linear(t, scope='linear-2')
+            for i, (dim, activation, bias) in enumerate(zip(num_nodes, activations, biases)):
+                t = self._linear(t, dim=dim, scope='linear-{}'.format(i), activation_fn=activation, bias=bias)
             return t
 
 
@@ -123,9 +136,9 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
-            sim = (tf.expand_dims(self.forward(x1), 2) *
-                   tf.expand_dims(self.forward(x2), 1))
-            sim = tf.reduce_sum(sim, axis=3)
+            new_x1 = self.forward(x1, biases=[True], activations=[tf.nn.relu])
+            new_x2 = self.forward(x2, biases=[True], activations=[tf.nn.relu])
+            sim = tf.matmul(new_x1, tf.transpose(new_x2, [0, 2, 1]))
             return sim
 
 

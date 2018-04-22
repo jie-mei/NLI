@@ -11,6 +11,7 @@ import tensorflow as tf
 
 import embed
 from util import build
+from util import tokenization_manager
 import preproc
 
 
@@ -41,47 +42,36 @@ class Dataset(ABC):
         self.labels = [] # type: List[Union[int, float]]
         # Load indexed word embedding
         iwe = self.__load_indexed_word_embedding(data_preproc, word_embedding)
-        self.embeds = iwe.embeds
+
         # Preprocess the dataset
-        def preproc(text, orig_list, proc_list):
-            orig_tks = nltk.word_tokenize(text)
-            proc_tks = data_preproc.preproc(orig_tks)
-            orig_list.append(orig_tks)
-            proc_list.append(proc_tks)
-        for s1, s2, label in self.parse(mode):
-            preproc(s1, self.s1s, self.w1s)
-            preproc(s2, self.s2s, self.w2s)
-            self.labels.append(label)
-        # Remove empty strings and convert words to ids
-        def word2id(word_lists: List[List[str]]) -> List[List[int]]:
-            return [[iwe.get_id(w) for w in words if w] for words in word_lists]
-        self.x1s, self.x2s = word2id(self.w1s), word2id(self.w2s)
+        data = list(self.parse(mode))
+        self.labels = [x[2] for x in data]
+        self.labels = np.array(self.labels)
+        s1 = [x[0] for x in data]
+        s2 = [x[1] for x in data]
+        tokenizer = tokenization_manager.fit_tokenizer(s1 + s2)
+        self.x1s = tokenization_manager.tokenize_texts(s1, tokenizer, max_len=82)
+        self.x2s = tokenization_manager.tokenize_texts(s2, tokenizer, max_len=82)
+        iwe.rebuild_index(tokenizer)
+        self.embeds = iwe.embeds
+
         # Summarize
         self.max_len = max(len(s) for s in self.x1s + self.x2s)
         self.data_size = len(self.x1s)
         # Align input word ids with tailing zeros
-        def align_ndarray(xs: List[List[int]]):
-            lists = [np.expand_dims(
-                            np.pad(l, [0, self.max_len - len(l)], 'constant'),
-                            axis=0)
-                     for l in xs]
-            return np.concatenate(lists)
-        self.x1s, self.x2s = align_ndarray(self.x1s), align_ndarray(self.x2s)
-        # Convert lists to numpy arrays
-        self.s1s, self.s2s = np.array(self.s1s), np.array(self.s2s)
-        self.w1s, self.w2s = np.array(self.w1s), np.array(self.w2s)
-        self.labels = np.array(self.labels)
 
-    def create_tf_dataset(self, shuffle_buffer_size=10240, shuffle=True, repeat_num=1, truncated_seq=40):
+    def create_tf_dataset(self, shuffle_buffer_size=40960, shuffle=True, repeat_num=1, truncated_seq=None):
         if truncated_seq is not None:
             self.x1s = self.x1s[:, :truncated_seq]
             self.x2s = self.x2s[:, :truncated_seq]
         np_data_slices = (self.x1s, self.x2s, self.labels)
-        dataset = tf.data.Dataset.from_tensor_slices(np_data_slices)
-        dataset = dataset.batch(self.batch_size)
+        self.dataset = tf.data.Dataset.from_tensor_slices(np_data_slices)
         if shuffle:
-            dataset = dataset.shuffle(buffer_size=10240)
-        self.dataset = dataset.repeat(repeat_num)
+            self.dataset = self.dataset.shuffle(buffer_size=shuffle_buffer_size)
+        self.dataset = self.dataset.repeat(repeat_num)
+        # self.dataset = self.dataset.prefetch(buffer_size=self.batch_size*20)
+        self.dataset = self.dataset.batch(self.batch_size)
+        # self.dataset = self.dataset.cache()
 
         self.iterator = tf.data.Iterator.from_structure(
             self.dataset.output_types, self.dataset.output_shapes)

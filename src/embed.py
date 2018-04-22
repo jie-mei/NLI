@@ -6,6 +6,8 @@ import gensim
 from gensim.scripts.glove2word2vec import glove2word2vec
 import numpy as np
 import spacy
+import random
+import hashlib
 
 
 class WordEmbedding(ABC):
@@ -40,6 +42,7 @@ class IndexedWordEmbedding(WordEmbedding):
                 self.embeds = np.vstack([self.embeds, embedding.get(w)])
             self.embeds = self.embeds[1:]
 
+
     def get_id(self, word: str) -> int:
         return self.ids[word]
 
@@ -48,6 +51,19 @@ class IndexedWordEmbedding(WordEmbedding):
 
     def get(self, word: str) -> np.array:
         return self.get_embedding(self.get_id(word))
+
+    def rebuild_index(self, tokenizer):
+        word_index = tokenizer.word_index
+        embedding_matrix = np.zeros((len(word_index) + 1, self.embeds.shape[1]))
+        for word, i in word_index.items():
+            if word in self.ids.keys():
+                embedding_matrix[i, :] = self.get(word)
+            else:
+                np.random.seed(hash(word) % 500)
+                embedding_matrix[i, :] = np.random.rand(1, self.embeds.shape[1])
+        self.embeds = embedding_matrix
+        self.ids = word_index
+        
 
 
 class PretrainedEmbedding(WordEmbedding):

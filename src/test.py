@@ -37,16 +37,18 @@ def evaluate(session: tf.Session,
                   List[List[float]],
                   List[List[float]]]:
     preds = []  # type: List[Union[int, float]]
+    labels = []
     session.run(dataset.initializer)
     while True:
         try:
-            pred = session.run(
-                [model.prediction])
-            preds += np.squeeze(pred).tolist(),
+            pred, y_true = session.run(
+                [model.prediction, model.y])
+            preds.extend(np.squeeze(pred).tolist())
+            labels.extend( np.squeeze(y_true).tolist())
             x1_atts, x2_atts, x1_sals, x2_sals = [[1] * len(preds) for _ in range(4)]
         except tf.errors.OutOfRangeError:
             break
-    return preds, x1_atts, x2_atts, x1_sals, x2_sals
+    return preds, labels, x1_atts, x2_atts, x1_sals, x2_sals
 
 
 @print_section
@@ -114,17 +116,16 @@ def test(name: str,
          softmax: bool = False,
          **kwargs,
          ) -> None:
-    print()
+    model_name = kwargs.get('model_name', 'model')
     print(data_name, mode)
     print(kwargs)
-    model_path = build.get_model_path(name)
-    test_data = data.load(data_name, mode, data_preproc, data_embedding, 1)
-    test_data.reset_max_len(40)  # TODO
+    model_path = build.get_model_path(name, model_name)
+    test_data = data.load(data_name, mode, data_preproc, data_embedding, 32)
     test_data.create_tf_dataset(shuffle=False)
 
     model = nn.Decomposeable(word_embeddings=test_data.embeds,
-                             seq_len=test_data.max_len,
                              dataset=test_data,
+                             train_mode=False,
                              **kwargs)
     _print_model_setup(model)
     _print_number_of_variables(model)
@@ -138,10 +139,10 @@ def test(name: str,
             tf.train.Saver().restore(sess, build.get_saved_model(model_path))
             print("%s restored." % (model_path))
 
-        #print(sess.run(model.evaluator.factor))
-
-        preds, x1_atts, x2_atts, x1_sals, x2_sals = evaluate(
+        preds, labels, x1_atts, x2_atts, x1_sals, x2_sals = evaluate(
                 sess, model, test_data, mode.title())
+    print('Acc: %.4f' % sklearn.metrics.accuracy_score(labels, preds))
+    exit()
 
     test_cases = [] # type: list
     for i in range(test_data.data_size):
@@ -168,7 +169,6 @@ def test(name: str,
         y_trues += gt, 
         y_preds += pred,
     print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
-    exit()
     print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
 
 

@@ -31,8 +31,8 @@ def parse_args(sys_argv: List[str]) -> Dict[str, Union[str, int, float, bool]]:
     return kwargs
 
 
-def get_model_path(model_name: str) -> str:
-    return './build/models/{}'.format(model_name)
+def get_model_path(model_name: str, detailed_name: str) -> str:
+    return './build/models/{}.{}'.format(model_name, detailed_name)
 
 
 def get_new_default_model_path() -> str:

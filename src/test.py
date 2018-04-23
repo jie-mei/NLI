@@ -117,7 +117,7 @@ def test(name: str,
     print(kwargs)
     model_path = build.get_model_path(name)
     test_data = data.load(data_name, mode, data_preproc, data_embedding, 1)
-    test_data.reset_max_len(41)  # TODO
+    #test_data.reset_max_len(41)  # TODO
 
     model = nn.Decomposeable(word_embeddings=test_data.embeds,
                              seq_len=test_data.max_len,

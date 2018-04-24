@@ -53,8 +53,9 @@ def train(name: str,
     train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
     train_data.create_tf_dataset(shuffle_buffer_size=20480)
     valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
+    valid_data.batch_size = 10 #valid_data.data_size
     valid_data.create_tf_dataset(shuffle=False)
-    valid_data.reset_max_len(train_data.max_len)
+    valid_data.initializer = train_data.iterator.make_initializer(valid_data.dataset)
 
     # Network setup
     model = nn.Decomposeable(word_embeddings=train_data.embeds,
@@ -84,7 +85,7 @@ def train(name: str,
     global_step = tf.Variable(0, trainable=False)
     starter_learning_rate = learning_rate
     learning_rate = tf.train.exponential_decay(starter_learning_rate, global_step,
-                                           10000, 0.995, staircase=True)
+                                           10000, 0.999, staircase=True)
     optimizer = get_train_op(model.loss, lr=learning_rate, clip_gradients=None, optimizer_name='adagrad', global_step=global_step)
 
     train_summary = tf.summary.merge_all()
@@ -109,7 +110,7 @@ def train(name: str,
                     _ = sess.run(
                         [optimizer],
                         )
-                    if step % 100 == 0:
+                    if step % 200 == 0:
                         summary, _, loss = sess.run(
                             [train_summary, optimizer, model.loss],
                             )
@@ -117,16 +118,14 @@ def train(name: str,
                 except tf.errors.OutOfRangeError:
                     break
 
-                #train_wtr.add_run_metadata(run_metadata, 'step%05d' % step)
                 step += 1
 
-#            if validate:
-#                valid_data.reset_index()
-#                x1, x2, y = valid_data.next_batch()
-#                summary, = sess.run([valid_summary],
-#                        feed_dict={model.x1: x1, model.x2: x2, model.y: y})
-#                valid_wtr.add_summary(summary, step)
-#                valid_wtr.flush()
+            if validate:
+                sess.run(valid_data.initializer)
+                summary,loss  = sess.run([valid_summary, model.loss])
+                print(loss)
+                valid_wtr.add_summary(summary, step)
+                valid_wtr.flush()
             save_path = (tf.train.Saver(max_to_keep=2)
                 .save(sess, build.get_save_path(model_path), global_step=epoch_num))
         print("model saved as", save_path)

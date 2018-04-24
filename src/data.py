@@ -69,9 +69,7 @@ class Dataset(ABC):
         if shuffle:
             self.dataset = self.dataset.shuffle(buffer_size=shuffle_buffer_size)
         self.dataset = self.dataset.repeat(repeat_num)
-        # self.dataset = self.dataset.prefetch(buffer_size=self.batch_size*20)
         self.dataset = self.dataset.batch(self.batch_size)
-        # self.dataset = self.dataset.cache()
 
         self.iterator = tf.data.Iterator.from_structure(
             self.dataset.output_types, self.dataset.output_shapes)

@@ -27,6 +27,7 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
 
         self.x1, self.x2, self.y = dataset.x1, dataset.x2, dataset.y
 
+
         def mask(x):
             # Explict masking the paddings.
             size = tf.count_nonzero(x, axis=1, dtype=tf.float32)
@@ -63,9 +64,22 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             # v2 = tf.reduce_sum(v2, axis=1)
             # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[200, 200, class_num], activations=[tf.nn.relu, tf.nn.relu, None], biases=[True, True, True])
             # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[ True, True])
-            y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[True, True])
+            # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[True, True])
             # y_hat = self.forward(tf.concat([v1, v2], 1), num_nodes=[class_num], activations=[None], biases=[True])
 
+            x_concat = tf.concat([v1, v2], 1)
+
+            # with tf.variable_scope('maxout') as s:
+                # x_concat = self.maxout(x_concat, 3, 100) 
+
+#            with tf.variable_scope('label1'):
+#                y1 = self.forward(self.feedforward_attention(x_concat), num_nodes=[100, 1], activations=[tf.nn.relu,  None], biases=[True, True])
+#            with tf.variable_scope('label2'):
+#                y2 = self.forward(self.feedforward_attention(x_concat), num_nodes=[100, 1], activations=[tf.nn.relu,  None], biases=[True, True])
+#            with tf.variable_scope('label3'):
+#                y3 = self.forward(self.feedforward_attention(x_concat), num_nodes=[100, 1], activations=[tf.nn.relu,  None], biases=[True, True])
+#            y_hat = tf.concat([y1, y2, y3], axis=1)
+            y_hat = self.forward(x_concat, num_nodes=[100, class_num], activations=[tf.nn.relu,  None], biases=[True, True])
         self.evaluate_and_loss(y_hat)
 
 
@@ -115,13 +129,16 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
             num_nodes=[-1],
             activations=[tf.nn.relu],
             biases=[True],
-            scope: Union[str, tf.VariableScope] = None
+            scope: Union[str, tf.VariableScope] = None,
+            noise=True
             ):
         scope = scope if scope else 'forward'
         t = inputs
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
             for i, (dim, activation, bias) in enumerate(zip(num_nodes, activations, biases)):
                 t = self._linear(t, dim=dim, scope='linear-{}'.format(i), activation_fn=activation, bias=bias)
+                if noise and self.train_mode:
+                    t = self.gaussian_noise(t)
             return t
 
 
@@ -178,3 +195,29 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         out = inv * (x1 - mean) + betas
         out = tf.nn.relu(out)
         return out
+
+    def maxout(self, inputs, num_channels=3, output_dim=100):
+        components = []
+        for i in range(num_channels):
+            with tf.variable_scope('maxout_{}'.format(i)):
+                components.append(self._linear(inputs, output_dim))
+        outputs = tf.stack(components, 2)
+        outputs = tf.reduce_max(outputs, -1)
+        return outputs
+
+    def gaussian_noise(self, inputs, std=0.001):
+        noise = tf.random_normal(shape=tf.shape(inputs), mean=0.0, stddev=std, dtype=tf.float32) 
+        return inputs + noise
+
+    def feedforward_attention(self, inputs, scope='feedforward_attention'):
+        att_vector = tf.contrib.layers.fully_connected(
+            scope=scope,
+            inputs=inputs,
+            weights_initializer=tf.initializers.truncated_normal(stddev=0.1),
+            weights_regularizer=tf.contrib.layers.l2_regularizer(scale=0.0001),
+            biases_initializer=None,
+            num_outputs=1,
+            activation_fn=None)
+        att_vector = tf.exp(att_vector)/ tf.reduce_sum(tf.exp(att_vector))
+        inputs = inputs*att_vector
+        return tf.reduce_mean(inputs, axis=1)

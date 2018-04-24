@@ -53,7 +53,7 @@ def train(name: str,
     train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
     train_data.create_tf_dataset(shuffle_buffer_size=20480)
     valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
-    valid_data.batch_size = 10 #valid_data.data_size
+    valid_data.batch_size = valid_data.data_size
     valid_data.create_tf_dataset(shuffle=False)
     valid_data.initializer = train_data.iterator.make_initializer(valid_data.dataset)
 
@@ -123,7 +123,6 @@ def train(name: str,
             if validate:
                 sess.run(valid_data.initializer)
                 summary,loss  = sess.run([valid_summary, model.loss])
-                print(loss)
                 valid_wtr.add_summary(summary, step)
                 valid_wtr.flush()
             save_path = (tf.train.Saver(max_to_keep=2)

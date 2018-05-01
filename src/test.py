@@ -18,6 +18,7 @@ import nn
 from util import build, parse
 from util import visualize as vis
 from util.annotation import print_section
+from util.log import exec_log as log
 
 
 
@@ -104,24 +105,17 @@ def to_attented_text(all_words: List[str],
 
 def test(name: str,
          mode: str = 'test',
-         data_name: str = 'MSRP',
-         data_preproc: str = 'Tokenize',
-         data_embedding: str = 'Word2Vec',
-         load: bool = True,
-         visualize: bool = False,
-         softmax: bool = False,
+         data_name: str = 'SNLI',
+         data_embedding: str = 'GloVe',
          **kwargs,
          ) -> None:
     print()
     print(data_name, mode)
     print(kwargs)
     model_path = build.get_model_path(name)
-    test_data = data.load(data_name, mode, data_preproc, data_embedding, 1)
-    #test_data.reset_max_len(41)  # TODO
+    test_data = data.load(data_name, mode, data_embedding)
 
-    model = nn.Decomposeable(word_embeddings=test_data.embeds,
-                             seq_len=test_data.max_len,
-                             **kwargs)
+    model = nn.Decomposeable(dataset=test_data, **kwargs)
     _print_model_setup(model)
     _print_number_of_variables(model)
 
@@ -129,42 +123,22 @@ def test(name: str,
     config.gpu_options.allow_growth=True
 
     with tf.Session(config=config) as sess:
-        if load:
-            print("reading from: %s" % (model_path))
-            tf.train.Saver().restore(sess, build.get_saved_model(model_path))
-            print("%s restored." % (model_path))
+        log.info('Restore pre-trained model from: %s' % model_path)
+        tf.train.Saver().restore(sess, build.get_saved_model(model_path))
 
-        #print(sess.run(model.evaluator.factor))
-
-        preds, x1_atts, x2_atts, x1_sals, x2_sals = evaluate(
-                sess, model, test_data, mode.title())
-
-    test_cases = [] # type: list
-    for i in range(test_data.data_size):
-        test_cases += [test_data.labels[i], preds[i],
-                       test_data.s1s[i], test_data.s2s[i],
-                       test_data.w1s[i], test_data.w2s[i],
-                       x1_atts[i], x2_atts[i],
-                       x1_sals[i], x2_sals[i]],
-
-    if visualize:
-        tsm = vis.TextSaliencyMap()
-        for gt, pred, w1_all, w2_all, w1, w2, x1_att, x2_att, x1_sal, x2_sal in test_cases:
-            tsm.add_colored_text([to_attented_text(w1_all, w1, x1_att, softmax),
-                                  to_attented_text(w2_all, w2, x2_att, softmax)],
-                                 pred, gt)
-            tsm.add_colored_text([to_attented_text(w1_all, w1, x1_sal, softmax),
-                                  to_attented_text(w2_all, w2, x2_sal, softmax)],
-                                 pred, gt)
-        tsm.write(os.path.join(model_path, 'visualize-%s.html' % mode))
+        y_preds, y_trues = [], []
+        sess.run(model.init)
+        while True:
+            try:
+                true, pred = sess.run([model.y, model.prediction])
+                y_preds.extend(np.squeeze(pred).tolist())
+                y_trues.extend(np.squeeze(true).tolist())
+            except tf.errors.OutOfRangeError:
+                break
 
     # accuracy
-    y_trues, y_preds = [], []  # type: list, list
-    for gt, pred, _, _, _, _, _, _, _, _ in test_cases:
-        y_trues += gt, 
-        y_preds += pred,
     print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
-    print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
+    #print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
 
 
 if __name__ == "__main__":
@@ -178,4 +152,5 @@ if __name__ == "__main__":
         fname = os.path.basename(kwargs['file'])
         kwargs['name'] = fname[:fname.rfind('.')]
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='test'), **kwargs}
+        del kwargs['file']
     test(**kwargs)

@@ -10,7 +10,7 @@ import shutil
 import embed
 import data
 import nn
-from util import build, parse, graph
+from util import build, parse, graph, log
 from util.annotation import print_section
 
 
@@ -36,9 +36,8 @@ def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
           learning_rate: float = 0.05,
-          data_name: str = 'MSRP',
-          data_preproc: str = 'Tokenize',
-          data_embedding: str = 'Word2Vec',
+          data_name: str = 'SNLI',
+          data_embedding: str = 'GloVe',
           validate: bool = True,
           **kwargs
           ) -> None:
@@ -48,14 +47,11 @@ def train(name: str,
     model_path = build.get_model_path(name)
     print('save path:', build.get_save_path(model_path))
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
-    train_data = data.load(data_name, 'train', data_preproc, data_embedding, batch_size)
-    valid_data = data.load(data_name, 'validation', data_preproc, data_embedding)
-    valid_data.reset_max_len(train_data.max_len)
+    train_data = data.load(data_name, 'train', data_embedding)
+    valid_data = data.load(data_name, 'validation', data_embedding)
 
     # Network setup
-    model = nn.Decomposeable(word_embeddings=train_data.embeds,
-                             seq_len=train_data.max_len,
-                             **kwargs)
+    model = nn.Decomposeable(dataset=train_data, **kwargs)
     _print_model_setup(model)
     _print_trainable_variables()
     _print_number_of_variables(model)
@@ -75,10 +71,10 @@ def train(name: str,
     train_summary = tf.summary.merge_all()
 
     # Optimization
-    #optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
-    #        .minimize(model.loss))
-    optimizer = (tf.train.AdamOptimizer(name="optimizer")
+    optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
             .minimize(model.loss))
+    #optimizer = (tf.train.AdamOptimizer(name="optimizer")
+    #        .minimize(model.loss))
 
     init = tf.global_variables_initializer()
     config = tf.ConfigProto()
@@ -91,32 +87,27 @@ def train(name: str,
             valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
         sess.run(init)
         step = 0
-        for e in range(1, epoch_num + 1):
-            # Training
-            desc = 'Epoch {num:{w}}'.format(num=e, w=len(str(epoch_num)))
-            pbar = tqdm.trange(train_data.num_batches(), unit='bts', desc=desc)
-            train_data.reset_index()
-            for i in pbar:
-                x1, x2, y = train_data.next_batch()
-                summary, _, loss = sess.run(
-                        [train_summary, optimizer, model.loss],
-                        feed_dict={model.x1: x1, model.x2: x2, model.y: y},
-                        #options=tf.RunOptions(
-                        #        trace_level=tf.RunOptions.FULL_TRACE),
-                        #run_metadata=run_metadata
-                        )
-                pbar.set_postfix(loss='{:.3f}'.format(loss))
-                train_wtr.add_summary(summary, step)
-                #train_wtr.add_run_metadata(run_metadata, 'step%05d' % step)
-                step += 1
+        pbar = tqdm.tqdm(range(1, epoch_num + 1), desc='Train', unit='epoch')
+        for e in pbar:
+            #options=tf.RunOptions(
+            #        trace_level=tf.RunOptions.FULL_TRACE),
+            #run_metadata=run_metadata
 
-            if validate:
-                valid_data.reset_index()
-                x1, x2, y = valid_data.next_batch()
-                summary, = sess.run([valid_summary],
-                        feed_dict={model.x1: x1, model.x2: x2, model.y: y})
-                valid_wtr.add_summary(summary, step)
-                valid_wtr.flush()
+            # Training
+            sess.run(model.init)
+            while True:
+                try:
+                    if not step % 100:
+                        summary, _, loss = sess.run(
+                                [train_summary, optimizer, model.loss])
+                        pbar.set_postfix(loss='{:.3f}'.format(loss))
+                        train_wtr.add_summary(summary, step)
+                        #train_wtr.add_run_metadata(run_metadata, 'step%05d' % step)
+                    else:
+                        sess.run([optimizer])
+                    step += 1
+                except tf.errors.OutOfRangeError:
+                    break
         save_path = (tf.train.Saver(max_to_keep=100)
                 .save(sess, build.get_save_path(model_path), global_step=e))
         print("model saved as", save_path)
@@ -134,4 +125,5 @@ if __name__ == "__main__":
         fname = os.path.basename(kwargs['file'])
         kwargs['name'] = fname[:fname.rfind('.')]
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='train'), **kwargs}
+        del kwargs['file']
     train(**kwargs)

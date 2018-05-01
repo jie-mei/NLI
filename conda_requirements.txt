@@ -1,19 +1,11 @@
-name: tensorflow-gpu
-
-channels:
-  - defaults
-  - conda-forge
-
-dependencies:
-  - python=3.6
-  - tensorflow-gpu
-  - tqdm
-  - spacy
-  - six
-  - seaborn
-  - pyyaml
-  - nltk
-  - pandas
-  - gensim
-  - beautifulsoup4
-  - pip
+tqdm
+spacy
+six
+seaborn
+pyyaml
+nltk
+pandas
+gensim
+beautifulsoup4
+scikit-learn
+pip

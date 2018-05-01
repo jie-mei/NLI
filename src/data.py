@@ -2,138 +2,114 @@ from abc import ABC, abstractmethod
 import math
 import os
 import pickle
+import random
 import re
-from typing import List, Set, Tuple, Generator, Union
+from typing import List, Set, Tuple, Generator, Union, Dict
 
 import numpy as np
 import nltk
+import tensorflow as tf
 
 import embed
 from util import build
+from util.log import exec_log as log
 import preproc
 
 
 class Dataset(ABC):
     """
     Attributes:
-        embeds:
-        s1s:
-        s2s:
-        x1s:
-        x2s:
+        x1_words:
+        x2_words:
+        x1_ids:
+        x2_ids:
         labels:
-        features:
-        batch_size:
-        embed:
     """
-    def __init__(self,
-                 mode: str,
-                 data_preproc: preproc.DataPreproc,
-                 word_embedding: embed.WordEmbedding,
-                 batch_size: int) -> None:
-        self._index = 0
-        self.batch_size = batch_size
+    def __init__(self, mode: str, word_embedding: embed.WordEmbedding) -> None:
+        # Load indexed word embedding
+        self.__iwe = self.__load_indexed_word_embedding(word_embedding)
         # Load data from file
         vocab = set()  # type: Set[str]
-        self.s1s, self.s2s = [], [] # type: List[List[str]], List[List[str]]
-        self.w1s, self.w2s = [], [] # type: List[List[str]], List[List[str]]
+        self.x1_words, self.x2_words = [], [] # type: List[List[str]], List[List[str]]
+        self.x1_ids, self.x2_ids = [], [] # type: List[List[int]], List[List[int]]
         self.labels = [] # type: List[Union[int, float]]
-        # Load indexed word embedding
-        iwe = self.__load_indexed_word_embedding(data_preproc, word_embedding)
-        self.embeds = iwe.embeds
-        # Preprocess the dataset
-        def preproc(text, orig_list, proc_list):
-            orig_tks = nltk.word_tokenize(text)
-            proc_tks = data_preproc.preproc(orig_tks)
-            orig_list.append(orig_tks)
-            proc_list.append(proc_tks)
-        for s1, s2, label in self.parse(mode):
-            preproc(s1, self.s1s, self.w1s)
-            preproc(s2, self.s2s, self.w2s)
+        def preproc(x_text, x_words, x_ids):
+            words = self._tokenize(x_text)
+            x_words.append(words)
+            x_ids.append([self.__iwe.get_id(w) for w in words])
+        for text1, text2, label in self.parse(mode):
+            preproc(text1, self.x1_words, self.x1_ids)
+            preproc(text2, self.x2_words, self.x2_ids)
             self.labels.append(label)
-        # Remove empty strings and convert words to ids
-        def word2id(word_lists: List[List[str]]) -> List[List[int]]:
-            return [[iwe.get_id(w) for w in words if w] for words in word_lists]
-        self.x1s, self.x2s = word2id(self.w1s), word2id(self.w2s)
-        # Summarize
-        self.max_len = max(len(s) for s in self.x1s + self.x2s)
-        self.data_size = len(self.x1s)
-        # Align input word ids with tailing zeros
-        def align_ndarray(xs: List[List[int]]):
-            lists = [np.expand_dims(
-                            np.pad(l, [0, self.max_len - len(l)], 'constant'),
-                            axis=0)
-                     for l in xs]
-            return np.concatenate(lists)
-        self.x1s, self.x2s = align_ndarray(self.x1s), align_ndarray(self.x2s)
-        # Convert lists to numpy arrays
-        self.s1s, self.s2s = np.array(self.s1s), np.array(self.s2s)
-        self.w1s, self.w2s = np.array(self.w1s), np.array(self.w2s)
-        self.labels = np.array(self.labels)
+
+    def embeddings(self):
+        return self.__iwe.get_embeddings()
 
     @classmethod
-    def __load_indexed_word_embedding(cls,
-            data_preproc: preproc.DataPreproc,
-            word_embedding: embed.WordEmbedding) -> embed.IndexedWordEmbedding:
-        # Load preprocessed word embeddings from pkl if applicable.
+    def _tokenize(cls, sentence: str) -> List[str]:
+        """ A tokenization function for parsing the input text.
+
+        The returning word list will be feed into the model. This method will be
+        called by other methods. Thus, preprocessing steps, e.g. filtering or
+        stemming, can be optionally applied by overriding this method.
+        """
+        return nltk.word_tokenize(sentence)
+
+    @classmethod
+    def _oov_assign(cls, word: str, dim: int) -> np.array:
+        """ Return a embedding vector for an OOV word.
+
+        Different assignment function can be applied by overriding this method.
+        The default function returns a fixed vector which entries are uniformly 
+        distributed random values in [-0.1, 0.1].
+        """
+        if not cls._OOV:
+            cls._OOV = np.random.uniform(-.1, .1, dim).astype("float32")
+        return cls._OOV
+    _OOV = None
+
+    @classmethod
+    def __load_indexed_word_embedding(cls, word_embedding: embed.WordEmbedding)\
+            -> embed.IndexedWordEmbedding:
+        """ Load a indexed word embedding object.
+        
+        This method will first check if the given setup have previously been
+        serialized, restore the object from file. Otherwise, construct a new
+        object with `cls._oov_assign()` and serialize to file.
+        """
+        # The naming convention of the serialization path.
         pkl_path = os.path.join(build.BUILD_DIR, 'data',
-                '{}.{}.{}.pkl'.format(cls.__name__,
-                                      data_preproc.__class__.__name__,
-                                      word_embedding.__class__.__name__))
+                '{}.{}.pkl'.format(cls.__name__,
+                                   word_embedding.__class__.__name__))
         if os.path.exists(pkl_path):
+            log.info('Restore corpus-specific indexed word embedding from file:'
+                     ' %s.' % pkl_path)
             with open(pkl_path, 'rb') as pkl_file:
                 embeds = pickle.load(pkl_file)
         else:
+            log.info('Build corpus-specific indexed word embedding.')
             vocab = set()  # type: Set[str]
             for mode in ['train', 'validation', 'test']:
                 for s1, s2, label in cls.parse(mode):
-                    vocab.update(data_preproc.preproc(nltk.word_tokenize(s1)))
-                    vocab.update(data_preproc.preproc(nltk.word_tokenize(s2)))
-            embeds = embed.IndexedWordEmbedding(vocab, word_embedding)
+                    vocab.update(cls._tokenize(s1))
+                    vocab.update(cls._tokenize(s2))
+            embeds = embed.IndexedWordEmbedding(vocab, word_embedding,
+                    lambda w: cls._oov_assign(w, word_embedding.dim))
             # Serialize for reusing
+            log.info('Save corpus-specific indexed word embedding to file: %s.'
+                     % pkl_path)
             os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
                     exist_ok=True)
             with open(pkl_path, 'wb') as pkl_file:
                 pickle.dump(embeds, pkl_file, 4)
         return embeds
 
-    def reset_max_len(self, max_len):
-        if max_len > self.max_len:
-            pad = max_len - self.max_len
-            self.x1s = np.pad(self.x1s, [[0, 0], [0, pad]], 'constant')
-            self.x2s = np.pad(self.x2s, [[0, 0], [0, pad]], 'constant')
-        elif max_len < self.max_len:
-            self.x1s = self.x1s[:, : max_len]
-            self.x2s = self.x2s[:, : max_len]
-        self.max_len = max_len
-
     @classmethod
     @abstractmethod
     def parse(cls, mode: str) \
             -> Generator[Tuple[str, str, Union[int, float]], None, None]:
-        """ Generate parsed data. """
+        """ Parse texts and label of each record from the data file. """
         pass
-
-    def reset_index(self) -> None:
-        # Shuffle data instances
-        p = np.random.permutation(len(self.x1s))
-        self.s1s, self.s2s = self.s1s[p], self.s2s[p]
-        self.w1s, self.w2s = self.w1s[p], self.w2s[p]
-        self.x1s, self.x2s = self.x1s[p], self.x2s[p]
-        self.labels = self.labels[p]
-        # Reset index
-        self._index = 0
-
-    def num_batches(self) -> int:
-        return math.ceil(len(self.labels) / self.batch_size)
-
-    def next_batch(self) -> Tuple[np.ndarray, np.ndarray, list]:
-        num = min(self.data_size - self._index, self.batch_size)
-        batch_x1s = self.x1s[self._index: self._index + num]
-        batch_x2s = self.x2s[self._index: self._index + num]
-        batch_labels = self.labels[self._index: self._index + num]
-        self._index += num
-        return batch_x1s, batch_x2s, batch_labels
 
 
 class MSRP(Dataset):
@@ -151,23 +127,6 @@ class MSRP(Dataset):
                 f.readline()  # skip the heading line
                 for line in f:
                     label, _, _, s1, s2 = line[:-1].split('\t')
-                    yield s1, s2, int(label)
-
-
-class WikiQA(Dataset):
-    DATA_FILES = {'train':      ['data/WikiQA/WikiQA-train.tsv',
-                                 'data/WikiQA/WikiQA-dev.tsv'],
-                  'validation': ['data/WikiQA/WikiQA-dev.tsv'],
-                  'test':       ['data/WikiQA/WikiQA-test.tsv'],
-                  }
-
-    @classmethod
-    def parse(cls, mode: str) \
-            -> Generator[Tuple[str, str, Union[int, float]], None, None]:
-        for data_file in cls.DATA_FILES[mode]:
-            with open(data_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    s1, s2, label = line.strip().split('\t')
                     yield s1, s2, int(label)
 
 
@@ -198,30 +157,55 @@ class SNLI(Dataset):
                                parse_sentence(fields[2]),
                                label)
 
+    @classmethod
+    def _tokenize(cls, sentence: str) -> List[str]:
+        """ Split the tokens as the SNLI dataset has already been parsed. Pad a
+        EOS symbol to the end of the sentence. """
+        return sentence.split() + ['<EOS>']
+
+    @classmethod
+    def _oov_assign(cls, word: str, dim: int) -> np.array:
+        """ Assign one of 100 randomly generated vector to each OOV word.
+
+        Each vector entry is a uniformly distributed random value in [-0.1,
+        0.1]. Different occurrances of the same OOV word will be assigned the
+        same embedding vector.
+        """
+        random_embed = lambda: np.random.uniform(-.1, .1, dim).astype("float32")
+        if word == '<EOS>':
+            if not cls._EOS_EMBED:
+                cls._EOS_EMBED = random_embed()
+            return cls._EOS_EMBED
+        if word not in cls._OOV_MAP:
+            if not cls._OOV_EMBEDS:
+                cls._OOV_EMBEDS = [random_embed() for _ in range(100)]
+            cls._OOV_MAP[word] = cls._OOV_EMBEDS[random.randint(0, 99)]
+        return cls._OOV_MAP[word]
+    _EOS_EMBED = None
+    _OOV_EMBEDS = []  # type: List[np.array]
+    _OOV_MAP = {}  # type: Dict[str, np.array]
+
 
 def load(data_name: str,
          data_mode: str,
-         data_preproc_name: str = 'Tokenize',
-         embedding_name: str = 'Word2Vec',
-         batch_size: int = 0,
+         embedding_name: str = 'GloVe',
          ) -> Dataset:
     # Load preprocessed data object from pkl if applicable.
     pkl_path = os.path.join(build.BUILD_DIR, 'data',
-            '{}-{}.{}.{}.pkl'.format(data_name,
-                                     data_mode,
-                                     data_preproc_name,
-                                     embedding_name))
+            '{}-{}.{}.pkl'.format(data_name, data_mode, embedding_name))
     if os.path.exists(pkl_path):
+        log.info('Restore %s %s dataset from file: %s' %
+                 (data_name, data_mode, pkl_path))
         with open(pkl_path, 'rb') as pkl_file:
             dataset = pickle.load(pkl_file)
     else:
-        embedding = embed.get(embedding_name)
-        data_preproc = getattr(preproc, data_preproc_name)()
-        dataset = globals()[data_name](data_mode, data_preproc, embedding,
-                batch_size)
+        log.info('Build %s %s dataset' % (data_name, data_mode))
+        embedding = embed.get(embedding_name, lazy_initialization=True)
+        dataset = globals()[data_name](data_mode, embedding)
         os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
                     exist_ok=True)
+        log.info('Serialize %s %s dataset to file %s.' %
+                 (data_mode, data_name, pkl_path))
         with open(pkl_path, 'wb') as pkl_file:
             pickle.dump(dataset, pkl_file, 4)
-    dataset.batch_size = batch_size if batch_size else dataset.data_size
     return dataset

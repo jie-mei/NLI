@@ -133,5 +133,6 @@ class SpacyGloVe(WordEmbedding):
         return self.nlp.vocab.get_vector(word)
 
 
-def get(embedding_name: str, *args, **kwargs) -> WordEmbedding:
+def init(embedding_name: str, *args, **kwargs) -> WordEmbedding:
+    """ Construct a word embedding object given its name. """
     return globals()[embedding_name](*args, **kwargs)

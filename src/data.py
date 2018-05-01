@@ -13,7 +13,6 @@ import tensorflow as tf
 import embed
 from util import build
 from util.log import exec_log as log
-import preproc
 
 
 class Dataset(ABC):
@@ -24,10 +23,11 @@ class Dataset(ABC):
         x1_ids:
         x2_ids:
         labels:
+        word_embedding:
     """
     def __init__(self, mode: str, word_embedding: embed.WordEmbedding) -> None:
         # Load indexed word embedding
-        self.__iwe = self.__load_indexed_word_embedding(word_embedding)
+        self.word_embedding = self._init_indexed_word_embedding(word_embedding)
         # Load data from file
         vocab = set()  # type: Set[str]
         self.x1_words, self.x2_words = [], [] # type: List[List[str]], List[List[str]]
@@ -36,14 +36,22 @@ class Dataset(ABC):
         def preproc(x_text, x_words, x_ids):
             words = self._tokenize(x_text)
             x_words.append(words)
-            x_ids.append([self.__iwe.get_id(w) for w in words])
+            x_ids.append([self.word_embedding.get_id(w) for w in words])
         for text1, text2, label in self.parse(mode):
             preproc(text1, self.x1_words, self.x1_ids)
             preproc(text2, self.x2_words, self.x2_ids)
             self.labels.append(label)
 
-    def embeddings(self):
-        return self.__iwe.get_embeddings()
+    @classmethod
+    def _init_indexed_word_embedding(cls, word_embedding: embed.WordEmbedding)\
+            -> embed.IndexedWordEmbedding:
+        vocab = set()  # type: Set[str]
+        for mode in ['train', 'validation', 'test']:
+            for s1, s2, label in cls.parse(mode):
+                vocab.update(cls._tokenize(s1))
+                vocab.update(cls._tokenize(s2))
+        return embed.IndexedWordEmbedding(vocab, word_embedding,
+                lambda w: cls._oov_assign(w, word_embedding.dim))
 
     @classmethod
     def _tokenize(cls, sentence: str) -> List[str]:
@@ -69,7 +77,7 @@ class Dataset(ABC):
     _OOV = None
 
     @classmethod
-    def __load_indexed_word_embedding(cls, word_embedding: embed.WordEmbedding)\
+    def load_indexed_word_embedding(cls, word_embedding: embed.WordEmbedding) \
             -> embed.IndexedWordEmbedding:
         """ Load a indexed word embedding object.
         
@@ -186,10 +194,7 @@ class SNLI(Dataset):
     _OOV_MAP = {}  # type: Dict[str, np.array]
 
 
-def load(data_name: str,
-         data_mode: str,
-         embedding_name: str = 'GloVe',
-         ) -> Dataset:
+def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Dataset:
     # Load preprocessed data object from pkl if applicable.
     pkl_path = os.path.join(build.BUILD_DIR, 'data',
             '{}-{}.{}.pkl'.format(data_name, data_mode, embedding_name))
@@ -200,7 +205,7 @@ def load(data_name: str,
             dataset = pickle.load(pkl_file)
     else:
         log.info('Build %s %s dataset' % (data_name, data_mode))
-        embedding = embed.get(embedding_name, lazy_initialization=True)
+        embedding = embed.init(embedding_name, lazy_initialization=True)
         dataset = globals()[data_name](data_mode, embedding)
         os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
                     exist_ok=True)
@@ -209,3 +214,33 @@ def load(data_name: str,
         with open(pkl_path, 'wb') as pkl_file:
             pickle.dump(dataset, pkl_file, 4)
     return dataset
+
+
+def load_embeddings(data_name: str, embedding_name: str):
+    """ Load a indexed word embedding object.
+    
+    This method will first check if the given setup have previously been
+    serialized, restore the object from file. Otherwise, construct a new object
+    with `cls._oov_assign()` and serialize to file.
+    """
+    # The naming convention of the serialization path.
+    pkl_path = os.path.join(build.BUILD_DIR, 'data',
+            '{}.{}.pkl'.format(data_name, embedding_name))
+    if os.path.exists(pkl_path):
+        log.info('Restore corpus-specific indexed word embedding from file: %s.'
+                 % pkl_path)
+        with open(pkl_path, 'rb') as pkl_file:
+            embeds = pickle.load(pkl_file)
+    else:
+        log.info('Build corpus-specific indexed word embedding.')
+        vocab = set()  # type: Set[str]
+        embeds = globals()[data_name]._init_indexed_word_embedding(
+                embed.init(embedding_name))
+        # Serialize for reusing
+        log.info('Save corpus-specific indexed word embedding to file: %s.'
+                 % pkl_path)
+        os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
+                exist_ok=True)
+        with open(pkl_path, 'wb') as pkl_file:
+            pickle.dump(embeds, pkl_file, 4)
+    return embeds

@@ -1,30 +1,28 @@
+from typing import Union, Callable
+
 import numpy as np
 import tensorflow as tf
 
+import embed
 from nn.base import Model, SoftmaxCrossEntropyMixin
 import op
-
-import data
-from typing import Union, Callable
 
 
 class Decomposeable(SoftmaxCrossEntropyMixin, Model):
 
     def __init__(self,
-            dataset: data.Dataset,
+            embeddings: embed.IndexedWordEmbedding,
             class_num: int,
             project_dim: int = 200,
             keep_prob: float = 1.0,
             intra_attention: bool = False,
             **kwargs,
             ) -> None:
+        super(Decomposeable, self).__init__()
         self.keep_prob = keep_prob
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self._class_num = class_num
-
-        # Fit the given dataset with optional parameters.
-        self.feed(dataset, **kwargs)
 
         def mask(x, x_len):
             # Explict masking the paddings.
@@ -34,7 +32,8 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
         with tf.variable_scope('embed') as s:
-            embed = lambda x: op.embedding(x, dataset.embeddings(), normalize=True)
+            embed = lambda x: op.embedding(x, embeddings.get_embeddings(),
+                    normalize=True)
             x1, x2 = map(embed, [self.x1, self.x2])
             project = lambda x: self.linear(x, self.project_dim)
             x1, x2 = map(project, [x1, x2])

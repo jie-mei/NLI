@@ -124,6 +124,28 @@ class GloVe(PretrainedEmbedding):
         super(GloVe, self).__init__(gensim_path, dim, binary, **kwargs)
 
 
+class GloVeNorm(GloVe):
+    def __init__(self,
+                 glove_path='/home/jmei/data/glove.840B.300d.txt',
+                 path='/home/jmei/data/glove.840B.300d.norm.txt',
+                 dim=300,
+                 binary=False,
+                 **kwargs):
+        if not os.path.exists(path):
+            # Preprocess the original GloVe data to allow using the gensim API.
+            log.info('Generate normalized GloVe embeddings to file: %s' % path)
+            with open(glove_path, 'r') as in_file:
+                with open(path, 'w') as out_file:
+                    for l in in_file:
+                        fields = l.split(' ')
+                        name = fields[:-300]
+                        embed = list(map(float, fields[-300:]))
+                        embed_norm = embed / np.linalg.norm(embed)
+                        out_file.write(' '.join(name) + ' ' +
+                                ' '.join(map(str, embed_norm)) + '\n')
+        super(GloVeNorm, self).__init__(path, dim, binary, **kwargs)
+
+
 class SpacyGloVe(WordEmbedding):
     def __init__(self):
         super(GloVe, self).__init__(300)

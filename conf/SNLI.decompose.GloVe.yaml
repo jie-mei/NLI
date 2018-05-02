@@ -3,7 +3,7 @@ model:
 
 data:
   name: SNLI
-  embedding: GloVe
+  embedding: GloVeNorm
 
 train:
   validate: False

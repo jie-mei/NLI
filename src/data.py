@@ -95,7 +95,7 @@ class Dataset(ABC):
             with open(pkl_path, 'rb') as pkl_file:
                 embeds = pickle.load(pkl_file)
         else:
-            log.info('Build corpus-specific indexed word embedding.')
+            log.info('Build corpus-specific indexed word embeddings')
             vocab = set()  # type: Set[str]
             for mode in ['train', 'validation', 'test']:
                 for s1, s2, label in cls.parse(mode):
@@ -181,7 +181,7 @@ class SNLI(Dataset):
         """
         random_embed = lambda: np.random.uniform(-.1, .1, dim).astype("float32")
         if word == '<EOS>':
-            if not cls._EOS_EMBED:
+            if cls._EOS_EMBED is None:
                 cls._EOS_EMBED = random_embed()
             return cls._EOS_EMBED
         if word not in cls._OOV_MAP:
@@ -205,7 +205,8 @@ def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Datase
             dataset = pickle.load(pkl_file)
     else:
         log.info('Build %s %s dataset' % (data_name, data_mode))
-        embedding = embed.init(embedding_name, lazy_initialization=True)
+        #embedding = embed.init(embedding_name, lazy_initialization=True)
+        embedding = load_embeddings(data_name, embedding_name)
         dataset = globals()[data_name](data_mode, embedding)
         os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
                     exist_ok=True)

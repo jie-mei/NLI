@@ -32,8 +32,7 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
         with tf.variable_scope('embed') as s:
-            embed = lambda x: op.embedding(x, embeddings.get_embeddings(),
-                    normalize=True)
+            embed = lambda x: op.embedding(x, embeddings.get_embeddings())
             x1, x2 = map(embed, [self.x1, self.x2])
             project = lambda x: self.linear(x, self.project_dim)
             x1, x2 = map(project, [x1, x2])

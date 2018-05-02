@@ -113,7 +113,7 @@ def test(name: str,
     print(data_name, mode)
     print(kwargs)
     model_path = build.get_model_path(name)
-    test_data = data.load(data_name, mode, data_embedding)
+    test_data = data.load_dataset(data_name, mode, data_embedding)
 
     model = nn.Decomposeable(dataset=test_data, **kwargs)
     _print_model_setup(model)

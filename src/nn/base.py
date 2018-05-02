@@ -1,7 +1,6 @@
 """ Base NN model. """
 
-from abc import ABC, abstractmethod
-from typing import Tuple
+from abc import ABC
 
 import tensorflow as tf
 import numpy as np
@@ -15,7 +14,9 @@ class Model(ReprMixin, ABC):
     """ A base NN model to conduct pairwised text analysis. """
 
     def __init__(self):
-        self.data_iterator = tf.data.Iterator.from_structure(
+        self.handle = tf.placeholder(tf.string, shape=[])
+        self.data_iterator = tf.data.Iterator.from_string_handle(
+                string_handle=self.handle,
                 output_types=(tf.int32,) * 5,
                 output_shapes=(tf.TensorShape([None, None]),
                                tf.TensorShape([None, None]),

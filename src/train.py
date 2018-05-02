@@ -18,22 +18,7 @@ from util.annotation import print_section
 from util.log import exec_log as log
 
 
-@print_section
-def _print_trainable_variables():
-    graph.print_trainable_variables()
-
-
-@print_section
-def _print_number_of_variables(model):
-    print("Total Variables: %d" % model.count_parameters())
-
-
-@print_section
-def _print_model_setup(model):
-    print(model)
-
-
-def _prepare_dataset(
+def _make_dataset(
         dataset: data.Dataset,
         batch_size: int,
         bucket_boundaries: t.List[int] = [],
@@ -41,7 +26,7 @@ def _prepare_dataset(
         shuffle_buffer_size: int = 40960,
         prefetch_buffer_size: int = -1,
         repeat_num: int = 1,
-        ) -> tf.data.Dataset:
+        ) -> t.Tuple[tf.data.Iterator, tf.Tensor]:
     """ Prepare tf.data.Dataset for evaluation.
 
     Args:
@@ -66,6 +51,7 @@ def _prepare_dataset(
                            tf.TensorShape([]),
                            tf.TensorShape([]),
                            tf.TensorShape([])))
+    dset = dset.cache()
 
     if shuffle and shuffle_buffer_size > 1:
         if tf.__version__ >= '1.6':
@@ -77,31 +63,107 @@ def _prepare_dataset(
         dset = dset.repeat(repeat_num)
 
     # Pack records with similar lengthes as batch.
-    if tf.__version__ >= '1.8':
-        log.debug('Generate batches using '
-                  'tf.contrib.data.bucket_by_sequence_length')
-        dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
-                lambda x1, x2, y, len1, len2: tf.maximum(len1, len2),
-                [20, 50],
-                [batch_size] * 3))
+    if bucket_boundaries:
+        if tf.__version__ >= '1.8':
+            log.debug('Generate batches using '
+                      'tf.contrib.data.bucket_by_sequence_length')
+            dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
+                    lambda x1, x2, y, len1, len2: tf.maximum(len1, len2),
+                    bucket_boundaries,
+                    [batch_size] * (len(bucket_boundaries) + 1)))
+        else:
+            log.debug('Generate batches using tf.contrib.data.group_by_window')
+            def bucketing(x1, x2, y, len1, len2):
+                size = tf.maximum(len1, len2)
+                bucket = tf.case(
+                        [(size < b, lambda: i + 1)
+                                for i, b in enumerate(bucket_boundaries)],
+                        default=lambda: 0,
+                        exclusive=True)
+                return tf.to_int64(bucket)
+            dset = dset.apply(tf.contrib.data.group_by_window(
+                    key_func=bucketing,
+                    reduce_func=lambda _, data: data.padded_batch(batch_size,
+                            padded_shapes = ([None], [None], [], [], [])),
+                    window_size=batch_size))
     else:
-        log.debug('Generate batches using tf.contrib.data.group_by_window')
-        def bucketing(x1, x2, y, len1, len2):
-            size = tf.maximum(len1, len2)
-            bucket = tf.case([(size < 20, lambda: 1),
-                              (size > 50, lambda: 2)],
-                             default=lambda: 0,
-                             exclusive=True)
-            return tf.to_int64(bucket)
-        dset = dset.apply(tf.contrib.data.group_by_window(
-                key_func=bucketing,
-                reduce_func=lambda _, data: data.padded_batch(batch_size,
-                        padded_shapes = ([None], [None], [], [], [])),
-                window_size=batch_size))
+        dset = dset.padded_batch(batch_size,
+                                 padded_shapes = ([None], [None], [], [], []))
 
     if prefetch_buffer_size <= 0:
-        prefetch_buffer_size = 32 * batch_size
+        prefetch_buffer_size = batch_size
     return dset.prefetch(buffer_size=prefetch_buffer_size)
+
+
+def _make_dataset_iterator(
+        session: tf.Session,
+        type_name: str,
+        **args):
+    dataset = _make_dataset(**args)
+    iterator = getattr(dataset, 'make_' + type_name)()
+    handle = session.run(iterator.string_handle())
+    return iterator, handle
+
+
+def _make_model_summary(model: nn.Model=None):
+    # Summary setup
+    tf.summary.scalar("Loss", model.loss)  # type: ignore
+    tf.summary.scalar("Accuracy", model.performance)  # type: ignore
+    # Plot all the parameters in tensorboard
+    for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
+        tf.summary.histogram(name=v.name.replace(':','_'), values=v)
+    return tf.summary.merge_all()
+
+
+def _make_config():
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth=True
+    return config
+
+
+def _iterate_dataset(session, model, iterator, handle, summary_writer, step):
+    """ Run dataset in the given session and record the accuracy. """
+    session.run(iterator.initializer)
+    y_preds, y_trues = [], []  # mypy: ignore
+    while True:
+        try:
+            true, pred = session.run([model.y, model.prediction],
+                    feed_dict={model.handle: handle})
+            y_preds += pred,
+            y_trues += true,
+        except tf.errors.OutOfRangeError:
+            break
+    acc = sklearn.metrics.accuracy_score(
+            np.concatenate(y_trues).tolist(),
+            np.concatenate(y_preds).tolist())
+    summary = tf.Summary(value=[
+            tf.Summary.Value(tag='Accuracy', simple_value=acc)])
+    summary_writer.add_summary(summary, step)
+
+
+def _profile_and_exit(session, model, optimizer, handle):
+    """ Profile the run metadata at the first iteration and exit the program.
+    """
+    from tensorflow.python.client import timeline
+    run_metadata = tf.RunMetadata()
+    for i in range(5):
+        session.run([optimizer],
+                feed_dict={model.handle: handle},
+                options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
+                run_metadata=run_metadata)
+        tl = timeline.Timeline(run_metadata.step_stats)
+        ctf = tl.generate_chrome_trace_format()
+        with open('timeline_%d.json' % i, 'w') as f:
+            f.write(ctf)
+    log.info('Profiles are created! Now exit.')
+    exit()
+
+
+def _save_model(session, path, step):
+    save_path = (tf.train.Saver(max_to_keep=100).save(session,
+            build.get_save_path(path),
+            global_step=step))
+    return save_path
 
 
 def train(name: str,
@@ -110,7 +172,10 @@ def train(name: str,
           learning_rate: float = 0.05,
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
-          validate: bool = True,
+          record_every: int = 1000,
+          validate_every: int = 10000,
+          save_every: int = 100000,
+          profiling: bool = False,
           **kwargs
           ) -> None:
 
@@ -118,115 +183,85 @@ def train(name: str,
     model_path = build.get_model_path(name)
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
 
-    train_data = _prepare_dataset(
-            dataset=data.load_dataset(data_name, 'train', data_embedding),
-            batch_size=batch_size,
-            bucket_boundaries=[20, 50])
-    valid_data = _prepare_dataset(
-            dataset=data.load_dataset(data_name, 'validation', data_embedding),
-            batch_size=batch_size,
-            shuffle=False)
-    test_data = _prepare_dataset(
-            dataset=data.load_dataset(data_name, 'test', data_embedding),
-            batch_size=batch_size,
-            shuffle=False)
-
     # Network setup
     model = nn.Decomposeable(
             embeddings=data.load_embeddings(data_name, data_embedding),
             **kwargs)
-    _print_model_setup(model)
-    _print_trainable_variables()
-    _print_number_of_variables(model)
+    log.info(str(model))
+    log.debug('Model parameters:\n\n\t' +
+              '\n\t'.join(graph.print_trainable_variables().split('\n')))
 
-    # Summary setup
-    tf.summary.scalar("Loss", model.loss)
-    tf.summary.scalar("Accuracy", model.performance)
-    # Plot all the parameters in tensorboard
-    for v in tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES):
-        tf.summary.histogram(name=v.name.replace(':','_'), values=v)
-    train_summary = tf.summary.merge_all()
+    train_summary = _make_model_summary(model)
 
     # Optimization
-    optimizer = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
-            .minimize(model.loss))
-    #optimizer = (tf.train.AdamOptimizer(name="optimizer")
-    #        .minimize(model.loss))
+    optim = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
+                         .minimize(model.loss))
 
-    init = tf.global_variables_initializer()
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth=True
+    with tf.Session(config=_make_config()) as sess:
+        sess.run(tf.global_variables_initializer())
 
-    with tf.Session(config=config) as sess:
         train_wtr = tf.summary.FileWriter(os.path.join(model_path, 'train'), sess.graph)
         valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
         test_wtr = tf.summary.FileWriter(os.path.join(model_path, 'test'))
 
-        sess.run(init)
-        train_init_op = model.data_iterator.make_initializer(train_data)
-        valid_init_op = model.data_iterator.make_initializer(valid_data)
-        test_init_op = model.data_iterator.make_initializer(test_data)
+        train_iter, train_hd = _make_dataset_iterator(
+                type_name='one_shot_iterator',
+                dataset=data.load_dataset(data_name, 'train', data_embedding),
+                batch_size=batch_size,
+                bucket_boundaries=[20, 50],
+                repeat_num=epoch_num,
+                session=sess)
+        valid_iter, valid_hd = _make_dataset_iterator(
+                type_name='initializable_iterator',
+                dataset=data.load_dataset(data_name, 'validation', data_embedding),
+                batch_size=batch_size,
+                shuffle=False,
+                session=sess)
+        test_iter, test_hd = _make_dataset_iterator(
+                type_name='initializable_iterator',
+                dataset=data.load_dataset(data_name, 'test', data_embedding),
+                batch_size=batch_size,
+                shuffle=False,
+                session=sess)
 
-        step = 0
-        pbar = tqdm.tqdm(range(1, epoch_num + 1), desc='Train', unit='epoch')
-        for e in pbar:
+        if profiling:
+            _profile_and_exit(sess, model, optim, train_hd)
 
-            # valid
-            pbar.set_description('Valid')
-            sess.run(valid_init_op)
-            y_preds, y_trues = [], []  # type: t.List[int], t.List[int]
+        step = 1
+        pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
+        try:
             while True:
-                try:
-                    true, pred = sess.run([model.y, model.prediction])
-                    y_preds += pred,
-                    y_trues += true,
-                except tf.errors.OutOfRangeError:
-                    break
-            acc = sklearn.metrics.accuracy_score(
-                    np.concatenate(y_trues).tolist(),
-                    np.concatenate(y_preds).tolist())
-            valid_wtr.add_summary(tf.Summary(value=[
-                        tf.Summary.Value(tag='Accuracy', simple_value=acc)
-                    ]), step)
+                if step % record_every == 0:
+                    summary, _, loss = sess.run(
+                            [train_summary, optim, model.loss],
+                            feed_dict={model.handle: train_hd})
+                    pbar.set_postfix(loss='{:.3f}'.format(loss))
+                    train_wtr.add_summary(summary, step)
+                else:
+                    sess.run([optim], feed_dict={model.handle: train_hd})
 
-            # test
-            pbar.set_description('Test')
-            sess.run(test_init_op)
-            y_preds, y_trues = [], []  # mypy: ignore
-            while True:
-                try:
-                    true, pred = sess.run([model.y, model.prediction])
-                    y_preds += pred,
-                    y_trues += true,
-                except tf.errors.OutOfRangeError:
-                    break
-            acc = sklearn.metrics.accuracy_score(
-                    np.concatenate(y_trues).tolist(),
-                    np.concatenate(y_preds).tolist())
-            test_wtr.add_summary(tf.Summary(value=[
-                        tf.Summary.Value(tag='Accuracy', simple_value=acc)
-                    ]), step)
+                if step % validate_every == 0:
+                    pbar.set_description('Valid')
+                    _iterate_dataset(sess, model, valid_iter, valid_hd, valid_wtr, step)
+                    pbar.set_description('Test')
+                    _iterate_dataset(sess, model, test_iter, test_hd, test_wtr, step)
+                    pbar.set_description('Train')
 
-            # Training
-            pbar.set_description('Train')
-            sess.run(train_init_op)
-            while True:
-                try:
-                    if not step % 100:
-                        summary, _, loss = sess.run(
-                                [train_summary, optimizer, model.loss])
-                        pbar.set_postfix(loss='{:.3f}'.format(loss))
-                        train_wtr.add_summary(summary, step)
-                    else:
-                        sess.run([optimizer])
-                    step += 1
-                except tf.errors.OutOfRangeError:
-                    break
+                if step % save_every == 0:
+                    save_path = _save_model(sess, model_path, step)
+                    pbar.set_description(save_path)
+                    pbar.update(1)
+                    pbar.close()
+                    pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
+                else:
+                    pbar.update(1)
 
-        save_path = (tf.train.Saver(max_to_keep=100)
-                .save(sess, build.get_save_path(model_path), global_step=e))
-        print("model saved as", save_path)
+                step += 1
 
+        except tf.errors.OutOfRangeError:
+            save_path = _save_model(sess, model_path, step)
+            pbar.set_description(save_path)
+            log.info('Training finished!')
 
 if __name__ == "__main__":
     # Disable the debugging INFO and WARNING information

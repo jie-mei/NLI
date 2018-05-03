@@ -120,7 +120,10 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         with tf.name_scope('attention') as s:
             sim = (tf.expand_dims(self.forward(x1), 2) *
                    tf.expand_dims(self.forward(x2), 1))
-            sim = tf.reduce_sum(sim, axis=3)
+            f1 = self.forward(x1)
+            f2 = self.forward(x2)
+            sim = f1 * f2
+            sim = tf.reduce_sum(sim, axis=2)
             return sim
 
 

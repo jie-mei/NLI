@@ -34,6 +34,7 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         with tf.variable_scope('embed') as s:
             embed = lambda x: op.embedding(x, embeddings.get_embeddings())
             x1, x2 = map(embed, [self.x1, self.x2])
+            # Linear projection
             project = lambda x: self.linear(x, self.project_dim)
             x1, x2 = map(project, [x1, x2])
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
@@ -41,8 +42,6 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
             sim *= mask1 * tf.matrix_transpose(mask2)
-            #alpha = tf.einsum('bki,bkj->bij', op.softmax(sim, axis=2), x1)
-            #beta  = tf.einsum('bik,bkj->bij', op.softmax(sim, axis=1), x2)
             alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
             beta  = tf.matmul(tf.nn.softmax(sim), x2)
         
@@ -118,10 +117,12 @@ class Decomposeable(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
-            sim = (tf.expand_dims(self.forward(x1), 2) *
-                   tf.expand_dims(self.forward(x2), 1))
-            sim = tf.reduce_sum(sim, axis=3)
-            return sim
+            #sim = (tf.expand_dims(self.forward(x1), 2) *
+            #       tf.expand_dims(self.forward(x2), 1))
+            #sim = tf.reduce_sum(sim, axis=3)
+            x1 = self.forward(x1)
+            x2 = self.forward(x2)
+            return tf.matmul(x1, tf.matrix_transpose(x2))
 
 
     def intra(self, x1, x2):

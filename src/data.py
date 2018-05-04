@@ -179,19 +179,23 @@ class SNLI(Dataset):
         0.1]. Different occurrances of the same OOV word will be assigned the
         same embedding vector.
         """
-        random_embed = lambda: np.random.uniform(-.1, .1, dim).astype("float32")
         if word == '<EOS>':
             if cls._EOS_EMBED is None:
-                cls._EOS_EMBED = random_embed()
+                cls._EOS_EMBED = cls._gen_random_embed()
             return cls._EOS_EMBED
         if word not in cls._OOV_MAP:
             if not cls._OOV_EMBEDS:
-                cls._OOV_EMBEDS = [random_embed() for _ in range(100)]
+                cls._OOV_EMBEDS = [cls._gen_random_embed() for _ in range(100)]
             cls._OOV_MAP[word] = cls._OOV_EMBEDS[random.randint(0, 99)]
         return cls._OOV_MAP[word]
     _EOS_EMBED = None
     _OOV_EMBEDS = []  # type: List[np.array]
     _OOV_MAP = {}  # type: Dict[str, np.array]
+
+    @classmethod
+    def _gen_random_embed(cls):
+        embed = np.random.uniform(-.1, .1, dim).astype("float32")
+        return embed / np.linalg.norm(embed)
 
 
 def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Dataset:
@@ -205,7 +209,6 @@ def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Datase
             dataset = pickle.load(pkl_file)
     else:
         log.info('Build %s %s dataset' % (data_name, data_mode))
-        #embedding = embed.init(embedding_name, lazy_initialization=True)
         embedding = load_embeddings(data_name, embedding_name)
         dataset = globals()[data_name](data_mode, embedding)
         os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),

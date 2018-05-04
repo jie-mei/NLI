@@ -7,6 +7,6 @@ data:
 
 train:
   validate: False
-  epoch_num: 100
+  epoch_num: 400
   batch_size: 32
   keep_prob: 0.8

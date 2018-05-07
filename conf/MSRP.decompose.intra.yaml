@@ -1,5 +1,4 @@
 model:
-  name: MSRP.decompose.intra
   class_num: 2
   intra_attention: true
 

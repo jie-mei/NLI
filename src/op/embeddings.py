@@ -26,10 +26,11 @@ def embedding(
     Returns:
         3-D Tensor [batch, seq_len, embed_dim]
     """
-    embeddings = tf.constant(word_embeddings, tf.float32, name='embeddings')
-    if normalize:
-        embeddings = tf.nn.l2_normalize(embeddings, 1)
-    if trainable:
-        # TODO: Aviod reassign
-        embeddings = tf.get_variable('embeddings', initializer=embeddings)
-    return tf.gather(embeddings, inputs)
+    with tf.device('gpu:0'):
+        embeddings = tf.constant(word_embeddings, tf.float32, name='embeddings')
+        if normalize:
+            embeddings = tf.nn.l2_normalize(embeddings, 1)
+        if trainable:
+            # TODO: Aviod reassign
+            embeddings = tf.get_variable('embeddings', initializer=embeddings)
+        return tf.gather(embeddings, inputs)

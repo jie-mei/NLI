@@ -1,5 +1,7 @@
 model:
+  model_type: Ngram
   class_num: 3
+  device: 'gpu:0'
 
 data:
   name: SNLI

@@ -1,5 +1,4 @@
 model:
-  name: MSRP.decompose.Glove.norm.mask
   class_num: 2
 
 data:

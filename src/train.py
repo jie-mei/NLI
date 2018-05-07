@@ -14,7 +14,6 @@ import embed
 import data
 import nn
 from util import build, parse, graph
-from util.annotation import print_section
 from util.log import exec_log as log
 
 
@@ -23,11 +22,12 @@ def _make_dataset(
         batch_size: int,
         bucket_boundaries: t.List[int] = [],
         shuffle: bool = True,
+        pad: bool = True,
         shuffle_buffer_size: int = 40960,
         prefetch_buffer_size: int = -1,
         repeat_num: int = 1,
         ) -> t.Tuple[tf.data.Iterator, tf.Tensor]:
-    """ Prepare tf.data.Dataset for evaluation.
+    """ Prepare a `tf.data.Dataset` for evaluation.
 
     Args:
         dataset: A dataset.
@@ -63,35 +63,40 @@ def _make_dataset(
         dset = dset.repeat(repeat_num)
 
     # Pack records with similar lengthes as batch.
-    if bucket_boundaries:
-        if tf.__version__ >= '1.8':
-            log.debug('Generate batches using '
-                      'tf.contrib.data.bucket_by_sequence_length')
-            dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
-                    lambda x1, x2, y, len1, len2: tf.maximum(len1, len2),
-                    bucket_boundaries,
-                    [batch_size] * (len(bucket_boundaries) + 1)))
+    if pad:
+        if bucket_boundaries:
+            if tf.__version__ >= '1.8':
+                log.debug('Generate batches using '
+                          'tf.contrib.data.bucket_by_sequence_length')
+                dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
+                        lambda x1, x2, y, len1, len2: tf.maximum(len1, len2),
+                        bucket_boundaries,
+                        [batch_size] * (len(bucket_boundaries) + 1)))
+            else:
+                log.debug('Generate batches using tf.contrib.data.group_by_window')
+                def bucketing(x1, x2, y, len1, len2):
+                    size = tf.maximum(len1, len2)
+                    bucket = tf.case(
+                            [(size < b, lambda: i + 1)
+                                    for i, b in enumerate(bucket_boundaries)],
+                            default=lambda: 0,
+                            exclusive=True)
+                    return tf.to_int64(bucket)
+                dset = dset.apply(tf.contrib.data.group_by_window(
+                        key_func=bucketing,
+                        reduce_func=lambda _, data: data.padded_batch(batch_size,
+                                padded_shapes = ([None], [None], [], [], [])),
+                        window_size=batch_size))
         else:
-            log.debug('Generate batches using tf.contrib.data.group_by_window')
-            def bucketing(x1, x2, y, len1, len2):
-                size = tf.maximum(len1, len2)
-                bucket = tf.case(
-                        [(size < b, lambda: i + 1)
-                                for i, b in enumerate(bucket_boundaries)],
-                        default=lambda: 0,
-                        exclusive=True)
-                return tf.to_int64(bucket)
-            dset = dset.apply(tf.contrib.data.group_by_window(
-                    key_func=bucketing,
-                    reduce_func=lambda _, data: data.padded_batch(batch_size,
-                            padded_shapes = ([None], [None], [], [], [])),
-                    window_size=batch_size))
+            log.debug('Generate padded batches without bucketing')
+            dset = dset.padded_batch(batch_size,
+                                     padded_shapes = ([None], [None], [], [], []))
     else:
-        dset = dset.padded_batch(batch_size,
-                                 padded_shapes = ([None], [None], [], [], []))
+        log.debug('Generate batches without padding input sequences')
+        dset = dset.batch(batch_size)
 
     if prefetch_buffer_size <= 0:
-        prefetch_buffer_size = batch_size
+        prefetch_buffer_size = 64 * batch_size
     return dset.prefetch(buffer_size=prefetch_buffer_size)
 
 
@@ -117,7 +122,8 @@ def _make_model_summary(model: nn.Model=None):
 
 def _make_config():
     config = tf.ConfigProto()
-    config.gpu_options.allow_growth=True
+    #config.gpu_options.allow_growth=True
+    config.allow_soft_placement=True
     return config
 
 
@@ -128,7 +134,8 @@ def _iterate_dataset(session, model, iterator, handle, summary_writer, step):
     while True:
         try:
             true, pred = session.run([model.y, model.prediction],
-                    feed_dict={model.handle: handle})
+                    feed_dict={model.handle: handle,
+                               model.keep_prob: 1.0})  # disable dropout
             y_preds += pred,
             y_trues += true,
         except tf.errors.OutOfRangeError:
@@ -170,8 +177,11 @@ def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
           learning_rate: float = 0.05,
+          keep_prob: float = 0.8,
+          model_type: str = 'Decomposable',
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
+          data_pad: bool = True,
           record_every: int = 1000,
           validate_every: int = 10000,
           save_every: int = 100000,
@@ -184,7 +194,8 @@ def train(name: str,
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
 
     # Network setup
-    model = nn.Decomposeable(
+    #model = nn.Decomposeable(
+    model = getattr(nn, model_type)(
             embeddings=data.load_embeddings(data_name, data_embedding),
             **kwargs)
     log.info(str(model))
@@ -209,6 +220,7 @@ def train(name: str,
                 dataset=data.load_dataset(data_name, 'train', data_embedding),
                 batch_size=batch_size,
                 bucket_boundaries=[20, 50],
+                pad=data_pad,
                 repeat_num=epoch_num,
                 session=sess)
         valid_iter, valid_hd = _make_dataset_iterator(
@@ -216,12 +228,14 @@ def train(name: str,
                 dataset=data.load_dataset(data_name, 'validation', data_embedding),
                 batch_size=batch_size,
                 shuffle=False,
+                pad=data_pad,
                 session=sess)
         test_iter, test_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
                 dataset=data.load_dataset(data_name, 'test', data_embedding),
                 batch_size=batch_size,
                 shuffle=False,
+                pad=data_pad,
                 session=sess)
 
         if profiling:
@@ -234,11 +248,13 @@ def train(name: str,
                 if step % record_every == 0:
                     summary, _, loss = sess.run(
                             [train_summary, optim, model.loss],
-                            feed_dict={model.handle: train_hd})
+                            feed_dict={model.handle: train_hd,
+                                       model.keep_prob: keep_prob})
                     pbar.set_postfix(loss='{:.3f}'.format(loss))
                     train_wtr.add_summary(summary, step)
                 else:
-                    sess.run([optim], feed_dict={model.handle: train_hd})
+                    sess.run([optim], feed_dict={model.handle: train_hd,
+                                                 model.keep_prob: keep_prob})
 
                 if step % validate_every == 0:
                     pbar.set_description('Valid')
@@ -263,6 +279,7 @@ def train(name: str,
             pbar.set_description(save_path)
             log.info('Training finished!')
 
+
 if __name__ == "__main__":
     # Disable the debugging INFO and WARNING information
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -276,4 +293,5 @@ if __name__ == "__main__":
         kwargs['name'] = fname[:fname.rfind('.')]  # type: ignore
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='train'), **kwargs}
         del kwargs['file']
+    log.debug('Input arguments: %s' % kwargs)
     train(**kwargs) # type: ignore

@@ -2,8 +2,9 @@ model:
   class_num: 3
 
 data:
-  name: SNLI
+  name: SNLIPad
   embedding: GloVeNorm
+  pad: False
 
 train:
   validate: False

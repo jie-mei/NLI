@@ -181,11 +181,12 @@ class SNLI(Dataset):
         """
         if word == '<EOS>':
             if cls._EOS_EMBED is None:
-                cls._EOS_EMBED = cls._gen_random_embed()
+                cls._EOS_EMBED = cls._gen_random_embed(dim)
             return cls._EOS_EMBED
         if word not in cls._OOV_MAP:
             if not cls._OOV_EMBEDS:
-                cls._OOV_EMBEDS = [cls._gen_random_embed() for _ in range(100)]
+                cls._OOV_EMBEDS = [cls._gen_random_embed(dim)
+                                   for _ in range(100)]
             cls._OOV_MAP[word] = cls._OOV_EMBEDS[random.randint(0, 99)]
         return cls._OOV_MAP[word]
     _EOS_EMBED = None
@@ -193,9 +194,31 @@ class SNLI(Dataset):
     _OOV_MAP = {}  # type: Dict[str, np.array]
 
     @classmethod
-    def _gen_random_embed(cls):
-        embed = np.random.uniform(-.1, .1, dim).astype("float32")
+    def _gen_random_embed(cls, dim):
+        """ Generate an embedding vector of Gausian distributed value with 0
+        mean and 0.1 standard deviation. The return value takes its l2-norm
+        form. """
+        embed = (np.random.randn(1, dim) * 0.1).astype("float32")
         return embed / np.linalg.norm(embed)
+
+
+class SNLIPad(SNLI):
+    """ Pad every sentence to length 101, where the padding value is randomly
+    generated embeding vector. """
+
+    @classmethod
+    def _tokenize(cls, sentence: str) -> List[str]:
+        tks = SNLI._tokenize(sentence)
+        return tks + ['<BLANK>'] * (101 - len(tks))
+
+    @classmethod
+    def _oov_assign(cls, word: str, dim: int) -> np.array:
+        if word == '<BLANK>':
+            if cls._BLANK_EMBED is None:
+                cls._BLANK_EMBED = cls._gen_random_embed(dim)
+            return cls._BLANK_EMBED
+        return SNLI._oov_assign(word, dim)
+    _BLANK_EMBED = None
 
 
 def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Dataset:

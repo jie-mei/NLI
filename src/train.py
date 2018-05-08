@@ -42,16 +42,17 @@ def _make_dataset(
         repeat_time: The number of times the records in the dataset are
             repeated.
     """
+    output_shapes = ([None], [None], [], [], [], [None], [None]) # type: tuple
     dset = tf.data.Dataset.from_generator(
-            lambda: ((x1, x2, y, len(x1), len(x2))
-                     for x1, x2, y in
-                     zip(dataset.x1_ids, dataset.x2_ids, dataset.labels)),
-            output_types=(tf.int32,) * 5,
-            output_shapes=(tf.TensorShape([None]),
-                           tf.TensorShape([None]),
-                           tf.TensorShape([]),
-                           tf.TensorShape([]),
-                           tf.TensorShape([])))
+            lambda: ((x1, x2, y, len(x1), len(x2), feat1, feat2)
+                     for x1, x2, y, feat1, feat2 in
+                     zip(dataset.x1_ids,
+                         dataset.x2_ids,
+                         dataset.labels,
+                         dataset.x1_feats,
+                         dataset.x2_feats)),
+            output_types=(tf.int32,) * 7,
+            output_shapes=output_shapes)
     dset = dset.cache()
 
     if shuffle and shuffle_buffer_size > 1:
@@ -73,11 +74,13 @@ def _make_dataset(
                 log.debug('Generate batches using '
                           'tf.contrib.data.bucket_by_sequence_length')
                 dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
-                        lambda x1, x2, y, len1, len2: tf.maximum(len1, len2),
+                        (lambda x1, x2, y, len1, len2, t1, t2:
+                                tf.maximum(len1, len2)),
                         bucket_boundaries,
                         [batch_size] * (len(bucket_boundaries) + 1)))
             else:
-                log.debug('Generate batches using tf.contrib.data.group_by_window')
+                log.debug('Generate batches using '
+                          'tf.contrib.data.group_by_window')
                 def bucketing(x1, x2, y, len1, len2):
                     size = tf.maximum(len1, len2)
                     bucket = tf.case(
@@ -89,12 +92,11 @@ def _make_dataset(
                 dset = dset.apply(tf.contrib.data.group_by_window(
                         key_func=bucketing,
                         reduce_func=lambda _, data: data.padded_batch(batch_size,
-                                padded_shapes = ([None], [None], [], [], [])),
+                                padded_shapes=output_shapes),
                         window_size=batch_size))
         else:
             log.debug('Generate padded batches without bucketing')
-            dset = dset.padded_batch(batch_size,
-                                     padded_shapes = ([None], [None], [], [], []))
+            dset = dset.padded_batch(batch_size, padded_shapes=output_shapes)
     else:
         log.debug('Generate batches without padding input sequences')
         dset = dset.batch(batch_size)

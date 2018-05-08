@@ -1,2 +1,2 @@
 from nn.decomposable import *
-from nn.nli import *
+from nn.ngram import *

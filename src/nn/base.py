@@ -14,17 +14,26 @@ class Model(ReprMixin, ABC):
     """ A base NN model to conduct pairwised text analysis. """
 
     def __init__(self):
-        self.handle = tf.placeholder(tf.string, shape=[])
-        self.data_iterator = tf.data.Iterator.from_string_handle(
-                string_handle=self.handle,
-                output_types=(tf.int32,) * 5,
-                output_shapes=(tf.TensorShape([None, None]),
-                               tf.TensorShape([None, None]),
-                               tf.TensorShape([None]),
-                               tf.TensorShape([None]),
-                               tf.TensorShape([None])))
-        self.x1, self.x2, self.y, self.len1, self.len2 = \
-                self.data_iterator.get_next()
+        with tf.name_scope('input'):
+            self.handle = tf.placeholder(tf.string, shape=[])
+            self.data_iterator = tf.data.Iterator.from_string_handle(
+                    string_handle=self.handle,
+                    output_types=(tf.int32,) * 7,
+                    output_shapes=(tf.TensorShape([None, None]),
+                                   tf.TensorShape([None, None]),
+                                   tf.TensorShape([None]),
+                                   tf.TensorShape([None]),
+                                   tf.TensorShape([None]),
+                                   tf.TensorShape([None, None]),
+                                   tf.TensorShape([None, None])))
+            iter_next = self.data_iterator.get_next()
+        self.x1   = tf.identity(iter_next[0], name='id1')
+        self.x2   = tf.identity(iter_next[1], name='id2')
+        self.y    = tf.identity(iter_next[2], name='y')
+        self.len1 = tf.identity(iter_next[3], name='len1')
+        self.len2 = tf.identity(iter_next[4], name='len2')
+        self.tag1 = tf.identity(iter_next[5], name='tag1')
+        self.tag2 = tf.identity(iter_next[6], name='tag2')
 
     def count_parameters(self):
         total = 0

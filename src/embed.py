@@ -65,10 +65,14 @@ class IndexedWordEmbedding(WordEmbedding):
         return self.__embeds
 
     def get_id(self, word: str) -> int:
-        return self.__ids[word]
+        try:
+            return self.__ids[word]
+        except KeyError as e:
+            raise type(e)(str(e) +
+                    ' This embedding object is incompetible with the query.')
 
     def __get_word_id(self, word: Union[str, int]) -> int:
-        return word if isinstance(word, int) else self.__ids[word]
+        return word if isinstance(word, int) else self.get_id(word)
 
     def is_oov(self, word: Union[str, int]) -> bool:
         return self.__is_oov[self.__get_word_id(word)]

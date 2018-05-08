@@ -76,7 +76,6 @@ class Dataset(ABC):
         """
         return features
 
-
     @classmethod
     def _oov_assign(cls, word: str, dim: int) -> np.array:
         """ Return a embedding vector for an OOV word.
@@ -166,6 +165,19 @@ class SNLI(Dataset):
               'contradiction': 1,
               'entailment':    2}
 
+    def __init__(self, mode: str, word_embedding: embed.WordEmbedding)-> None:
+        super(SNLI, self).__init__(mode, word_embedding)
+        self.tags = {}  # type: t.Dict[str, int]
+        for mode in ['train', 'validation', 'test']:
+            for _, _, label, tags1, tags2 in self.parse(mode):
+                for tag in tags1 + tags2:
+                    if tag not in self.tags:
+                        self.tags[tag] = len(self.tags)
+        # Transform tags to tag IDs.
+        for feats in [self.x1_feats, self.x2_feats]:
+            for i in range(len(feats)):
+                feats[i] = [self.tags[t] for t in feats[i]]
+
     @classmethod
     def parse(cls, mode: str) \
             -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
@@ -174,6 +186,16 @@ class SNLI(Dataset):
         def parse_sentence(sent):
             # Remove all brackets.
             return re.sub(r'(\(|\)) ?', '', sent)
+        def parse_tree(string):
+            """ Parse the syntax tree given the sentence parse marker. This
+            function returns two lists of tokens and crossponding POS tags,
+            respectively. """
+            tags, words = [], []
+            for mo in re.finditer(r'\(([^\s()]+) ([^\s()]+)\)', string):
+                tag, word = mo.group(1, 2)
+                tags += tag,
+                words += word,
+            return tags, words
         for data_file in cls.DATA_FILES[mode]:
             with open(data_file, 'r', encoding='utf-8') as f:
                 f.readline()  # skip the heading line
@@ -181,24 +203,22 @@ class SNLI(Dataset):
                     fields  = line.strip().split('\t')
                     label = cls.LABELS.get(fields[0], None)
                     if label is not None:  # skip the non-relation pairs
-                        yield (parse_sentence(fields[1]),
-                               parse_sentence(fields[2]),
-                               label,
-                               None,
-                               None)
+                        tags1, words1 = parse_tree(fields[3])
+                        tags2, words2 = parse_tree(fields[4])
+                        sent1 = ' '.join(words1)
+                        sent2 = ' '.join(words2)
+                        yield (sent1, sent2, label, tags1, tags2)
 
     @classmethod
     def _tokenize(cls, sentence: str) -> t.List[str]:
         """ Split the tokens as the SNLI dataset has already been parsed. Pad a
         EOS symbol to the end of the sentence. """
-        return sentence.split() + ['<EOS>']
+        return sentence.split()# + ['<EOS>']
 
     @classmethod
     def _oov_assign(cls, word: str, dim: int) -> np.array:
         """ Assign one of 100 randomly generated vector to each OOV word.
 
-        Each vector entry is a uniformly distributed random value in [-0.1,
-        0.1]. Different occurrances of the same OOV word will be assigned the
         same embedding vector.
         """
         if word == '<EOS>':
@@ -222,25 +242,6 @@ class SNLI(Dataset):
         form. """
         embed = (np.random.randn(1, dim) * 0.1).astype("float32")
         return embed / np.linalg.norm(embed)
-
-
-class SNLIPad(SNLI):
-    """ Pad every sentence to length 101, where the padding value is randomly
-    generated embeding vector. """
-
-    @classmethod
-    def _tokenize(cls, sentence: str) -> t.List[str]:
-        tks = SNLI._tokenize(sentence)
-        return tks + ['<BLANK>'] * (101 - len(tks))
-
-    @classmethod
-    def _oov_assign(cls, word: str, dim: int) -> np.array:
-        if word == '<BLANK>':
-            if cls._BLANK_EMBED is None:
-                cls._BLANK_EMBED = cls._gen_random_embed(dim)
-            return cls._BLANK_EMBED
-        return SNLI._oov_assign(word, dim)
-    _BLANK_EMBED = None
 
 
 def load_dataset(data_name: str, data_mode: str, embedding_name: str,) -> Dataset:

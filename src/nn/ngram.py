@@ -1,3 +1,4 @@
+from abc import ABC, abstractmethod
 import typing as t
 
 import numpy as np
@@ -7,7 +8,7 @@ import embed
 from nn.decomposable import Decomposable
 
 
-class Ngram(Decomposable):
+class Ngram(Decomposable, ABC):
 
     def __init__(self,
             ngram_size: t.Union[int, t.List[int]] = [2, 3],
@@ -22,11 +23,22 @@ class Ngram(Decomposable):
             x = tf.concat([x, self.ngram_embed(x, size)], 1)
         return x
 
+    @abstractmethod
+    def ngram_embed(self,
+            x: tf.Tensor,
+            ngram_size: int,
+            weight_stddev: float = 0.01
+            )-> tf.Tensor:
+        pass
+
+
+class ConvNgram(Decomposable, ABC):
+
     def ngram_embed(self,
             x: tf.Tensor,
             ngram_size: int,
             weight_stddev: float = 0.01,
-            ):
+            )-> tf.Tensor:
         with tf.device(self.device):
             t = tf.expand_dims(x, -1)
             t = tf.layers.conv2d(t, 
@@ -39,4 +51,17 @@ class Ngram(Decomposable):
             t = tf.nn.relu(t)
             t = tf.squeeze(t, [2])
         return t
+
+
+class TagGatedConvNgram(Decomposable, ABC):
+
+    def __init__(self, tags_num: int)-> None:
+        self.tags_num = tags_num
+
+    def ngram_embed(self,
+            x: tf.Tensor,
+            ngram_size: int,
+            weight_stddev: float = 0.01,
+            )-> tf.Tensor:
+        pass
 

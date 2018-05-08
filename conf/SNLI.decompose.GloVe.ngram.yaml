@@ -1,5 +1,5 @@
 model:
-  model_type: Ngram
+  model_type: ConvNgram
   class_num: 3
   ngram_size: 2
 
@@ -8,10 +8,8 @@ data:
   embedding: GloVeNorm
 
 train:
-  #optimizer_type: AdamOptimizer
-  #learning_rate: 0.001
   validate: False
   epoch_num: 400
   batch_size: 64
   keep_prob: 0.8
-  seed: 8132
+  seed: 1234

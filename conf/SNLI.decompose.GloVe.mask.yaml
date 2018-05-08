@@ -1,17 +1,13 @@
 model:
-  model_type: Ngram
   class_num: 3
-  ngram_size: 2
 
 data:
   name: SNLI
   embedding: GloVeNorm
 
 train:
-  #optimizer_type: AdamOptimizer
-  #learning_rate: 0.001
+  device: 'gpu:1'
   validate: False
   epoch_num: 400
   batch_size: 64
   keep_prob: 0.8
-  seed: 8132

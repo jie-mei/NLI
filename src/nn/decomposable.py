@@ -30,11 +30,10 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             self.keep_prob = tf.placeholder(tf.float32, shape=[])
 
         def mask(x, x_len):
-            # Explict masking the paddings.
-            size = tf.reshape(x_len, [-1])
-            mask = tf.sequence_mask(size, tf.shape(x)[1], dtype=tf.float32)
+            # Explict mask the paddings.
+            mask = tf.sequence_mask(x_len, tf.shape(x)[1], dtype=tf.float32)
             return tf.expand_dims(mask, -1)
-        mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
+        # mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
         with tf.variable_scope('embed') as s:
             with tf.device(self.device):
@@ -51,7 +50,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
 
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
-            #sim *= mask1 * tf.matrix_transpose(mask2)
+            # sim *= mask1 * tf.matrix_transpose(mask2)
             alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
             beta  = tf.matmul(tf.nn.softmax(sim), x2)
         
@@ -60,13 +59,16 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             v2 = self.forward(tf.concat([x2, alpha], 2))
 
         with tf.variable_scope('aggregate') as s:
-            #v1 = tf.reduce_sum(v1 * mask1, axis=1)
-            #v2 = tf.reduce_sum(v2 * mask2, axis=1)
+            # CHANGE
             v1 = tf.reduce_sum(v1, axis=1)
             v2 = tf.reduce_sum(v2, axis=1)
+            #def reduce_mean(x, x_len):
+            #    return (tf.reduce_sum(x, axis=1) /
+            #            tf.expand_dims(tf.cast(x_len, tf.float32), -1))
+            #v1 = reduce_mean(v1 * mask1, self.len1)
+            #v2 = reduce_mean(v2 * mask2, self.len2)
             y_hat = self.forward(tf.concat([v1, v2], 1))
-            #y_hat = self.linear(y_hat, dim=class_num, bias=True)
-            y_hat = self.linear(y_hat, dim=class_num)
+            y_hat = self.linear(y_hat, dim=self._class_num)
 
         self.evaluate_and_loss(y_hat)
 

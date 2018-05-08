@@ -26,6 +26,7 @@ def _make_dataset(
         shuffle_buffer_size: int = 40960,
         prefetch_buffer_size: int = -1,
         repeat_num: int = 1,
+        seed: int = None
         ) -> t.Tuple[tf.data.Iterator, tf.Tensor]:
     """ Prepare a `tf.data.Dataset` for evaluation.
 
@@ -56,9 +57,12 @@ def _make_dataset(
     if shuffle and shuffle_buffer_size > 1:
         if tf.__version__ >= '1.6':
             dset = dset.apply(tf.contrib.data.shuffle_and_repeat(
-                shuffle_buffer_size, repeat_num))
+                buffer_size=shuffle_buffer_size,
+                count=repeat_num,
+                seed=seed))
         else:
-            dset = dset.shuffle(shuffle_buffer_size).repeat(repeat_num)
+            dset = (dset.shuffle(shuffle_buffer_size, seed=seed)
+                        .repeat(repeat_num))
     else:
         dset = dset.repeat(repeat_num)
 
@@ -120,6 +124,15 @@ def _make_model_summary(model: nn.Model=None):
     return tf.summary.merge_all()
 
 
+def _make_optimizer(type_name: str, **kwargs):
+    kwargs['name'] = "optimizer"
+    log.debug('Model optimzation using %s' % type_name)
+    if type_name == 'AdamOptimizer' and kwargs['learning_rate'] != 0.001:
+        log.warning('Apply learning rate %f with AdamOptimizer' %
+                    kwargs['learning_rate'])
+    return getattr(tf.train, type_name)(**kwargs)
+
+
 def _make_config():
     config = tf.ConfigProto()
     #config.gpu_options.allow_growth=True
@@ -176,8 +189,9 @@ def _save_model(session, path, step):
 def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
-          learning_rate: float = 0.05,
           keep_prob: float = 0.8,
+          learning_rate: float = 0.05,
+          optimizer_type: str = 'AdagradOptimizer',
           model_type: str = 'Decomposable',
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
@@ -186,6 +200,7 @@ def train(name: str,
           validate_every: int = 10000,
           save_every: int = 100000,
           profiling: bool = False,
+          seed: int = None,
           **kwargs
           ) -> None:
 
@@ -194,7 +209,6 @@ def train(name: str,
     shutil.rmtree(model_path, ignore_errors=True)  # remove previous trained
 
     # Network setup
-    #model = nn.Decomposeable(
     model = getattr(nn, model_type)(
             embeddings=data.load_embeddings(data_name, data_embedding),
             **kwargs)
@@ -204,9 +218,13 @@ def train(name: str,
 
     train_summary = _make_model_summary(model)
 
+    # Control randomization
+    if seed:
+        log.info('Set random seed for data shuffling and graph computation: %d' % seed)
+        tf.set_random_seed(seed)
+
     # Optimization
-    optim = (tf.train.AdagradOptimizer(learning_rate, name="optimizer")
-                         .minimize(model.loss))
+    optim = _make_optimizer(optimizer_type, learning_rate=learning_rate).minimize(model.loss)
 
     with tf.Session(config=_make_config()) as sess:
         sess.run(tf.global_variables_initializer())
@@ -222,6 +240,7 @@ def train(name: str,
                 bucket_boundaries=[20, 50],
                 pad=data_pad,
                 repeat_num=epoch_num,
+                seed=seed,
                 session=sess)
         valid_iter, valid_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
@@ -293,5 +312,6 @@ if __name__ == "__main__":
         kwargs['name'] = fname[:fname.rfind('.')]  # type: ignore
         kwargs = {**parse.parse_yaml(kwargs['file'], mode='train'), **kwargs}
         del kwargs['file']
-    log.debug('Input arguments: %s' % kwargs)
+    log.debug('Input arguments:\n\n\t%s\n' %
+              '\n\t'.join('%-20s %s' % (k + ':', v) for k, v in kwargs.items()))
     train(**kwargs) # type: ignore

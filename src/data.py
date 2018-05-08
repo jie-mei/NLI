@@ -4,7 +4,7 @@ import os
 import pickle
 import random
 import re
-from typing import List, Set, Tuple, Generator, Union, Dict
+import typing as t
 
 import numpy as np
 import nltk
@@ -22,6 +22,8 @@ class Dataset(ABC):
         x2_words:
         x1_ids:
         x2_ids:
+        x1_feats:
+        x2_feats:
         labels:
         word_embedding:
     """
@@ -29,32 +31,34 @@ class Dataset(ABC):
         # Load indexed word embedding
         self.word_embedding = self._init_indexed_word_embedding(word_embedding)
         # Load data from file
-        vocab = set()  # type: Set[str]
-        self.x1_words, self.x2_words = [], [] # type: List[List[str]], List[List[str]]
-        self.x1_ids, self.x2_ids = [], [] # type: List[List[int]], List[List[int]]
-        self.labels = [] # type: List[Union[int, float]]
-        def preproc(x_text, x_words, x_ids):
-            words = self._tokenize(x_text)
-            x_words.append(words)
-            x_ids.append([self.word_embedding.get_id(w) for w in words])
-        for text1, text2, label in self.parse(mode):
-            preproc(text1, self.x1_words, self.x1_ids)
-            preproc(text2, self.x2_words, self.x2_ids)
+        vocab = set()  # type: t.Set[str]
+        self.x1_words, self.x2_words = [], []  # type: t.List[t.List[str]], t.List[t.List[str]]
+        self.x1_ids, self.x2_ids = [], []  # type: t.List[t.List[int]], t.List[t.List[int]]
+        self.x1_feats, self.x2_feats = [], []  # type: t.List[t.List[t.Any]], t.List[t.List[t.Any]]
+        self.labels = []  # type: t.List[t.Union[int, float]]
+        def preproc(x_text_in, x_feats_in, x_words_out, x_ids_out, x_feats_out):
+            words = self._tokenize(x_text_in)
+            x_words_out.append(words)
+            x_ids_out.append([self.word_embedding.get_id(w) for w in words])
+            x_feats_out.append(self._feats_preproc(x_feats_in))
+        for text1, text2, label, feats1, feats2 in self.parse(mode):
+            preproc(text1, feats1, self.x1_words, self.x1_ids, self.x1_feats)
+            preproc(text2, feats2, self.x2_words, self.x2_ids, self.x2_feats)
             self.labels.append(label)
 
     @classmethod
     def _init_indexed_word_embedding(cls, word_embedding: embed.WordEmbedding)\
             -> embed.IndexedWordEmbedding:
-        vocab = set()  # type: Set[str]
+        vocab = set()  # type: t.Set[str]
         for mode in ['train', 'validation', 'test']:
-            for s1, s2, label in cls.parse(mode):
+            for s1, s2, label, _, _ in cls.parse(mode):
                 vocab.update(cls._tokenize(s1))
                 vocab.update(cls._tokenize(s2))
         return embed.IndexedWordEmbedding(vocab, word_embedding,
                 lambda w: cls._oov_assign(w, word_embedding.dim))
 
     @classmethod
-    def _tokenize(cls, sentence: str) -> List[str]:
+    def _tokenize(cls, sentence: str) -> t.List[str]:
         """ A tokenization function for parsing the input text.
 
         The returning word list will be feed into the model. This method will be
@@ -64,10 +68,20 @@ class Dataset(ABC):
         return nltk.word_tokenize(sentence)
 
     @classmethod
+    def _feats_preproc(cls, features: t.Any) -> t.List[t.Any]:
+        """ Sentence feature preprocessing.
+
+        Different preprocessing functions can be applied by overriding this
+        method.
+        """
+        return features
+
+
+    @classmethod
     def _oov_assign(cls, word: str, dim: int) -> np.array:
         """ Return a embedding vector for an OOV word.
 
-        Different assignment function can be applied by overriding this method.
+        Different assignment functions can be applied by overriding this method.
         The default function returns a fixed vector which entries are uniformly 
         distributed random values in [-0.1, 0.1].
         """
@@ -96,9 +110,9 @@ class Dataset(ABC):
                 embeds = pickle.load(pkl_file)
         else:
             log.info('Build corpus-specific indexed word embeddings')
-            vocab = set()  # type: Set[str]
+            vocab = set()  # type: t.Set[str]
             for mode in ['train', 'validation', 'test']:
-                for s1, s2, label in cls.parse(mode):
+                for s1, s2, label, _, _ in cls.parse(mode):
                     vocab.update(cls._tokenize(s1))
                     vocab.update(cls._tokenize(s2))
             embeds = embed.IndexedWordEmbedding(vocab, word_embedding,
@@ -115,7 +129,9 @@ class Dataset(ABC):
     @classmethod
     @abstractmethod
     def parse(cls, mode: str) \
-            -> Generator[Tuple[str, str, Union[int, float]], None, None]:
+            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
+                           None,
+                           None]:
         """ Parse texts and label of each record from the data file. """
         pass
 
@@ -129,13 +145,15 @@ class MSRP(Dataset):
 
     @classmethod
     def parse(cls, mode: str) \
-            -> Generator[Tuple[str, str, Union[int, float]], None, None]:
+            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
+                           None,
+                           None]:
         for data_file in cls.DATA_FILES[mode]:
             with open(data_file, 'r', encoding='utf-8') as f:
                 f.readline()  # skip the heading line
                 for line in f:
                     label, _, _, s1, s2 = line[:-1].split('\t')
-                    yield s1, s2, int(label)
+                    yield s1, s2, int(label), _, _
 
 
 class SNLI(Dataset):
@@ -150,7 +168,9 @@ class SNLI(Dataset):
 
     @classmethod
     def parse(cls, mode: str) \
-            -> Generator[Tuple[str, str, Union[int, float]], None, None]:
+            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
+                           None,
+                           None]:
         def parse_sentence(sent):
             # Remove all brackets.
             return re.sub(r'(\(|\)) ?', '', sent)
@@ -163,10 +183,12 @@ class SNLI(Dataset):
                     if label is not None:  # skip the non-relation pairs
                         yield (parse_sentence(fields[1]),
                                parse_sentence(fields[2]),
-                               label)
+                               label,
+                               None,
+                               None)
 
     @classmethod
-    def _tokenize(cls, sentence: str) -> List[str]:
+    def _tokenize(cls, sentence: str) -> t.List[str]:
         """ Split the tokens as the SNLI dataset has already been parsed. Pad a
         EOS symbol to the end of the sentence. """
         return sentence.split() + ['<EOS>']
@@ -190,8 +212,8 @@ class SNLI(Dataset):
             cls._OOV_MAP[word] = cls._OOV_EMBEDS[random.randint(0, 99)]
         return cls._OOV_MAP[word]
     _EOS_EMBED = None
-    _OOV_EMBEDS = []  # type: List[np.array]
-    _OOV_MAP = {}  # type: Dict[str, np.array]
+    _OOV_EMBEDS = []  # type: t.List[np.array]
+    _OOV_MAP = {}  # type: t.Dict[str, np.array]
 
     @classmethod
     def _gen_random_embed(cls, dim):
@@ -207,7 +229,7 @@ class SNLIPad(SNLI):
     generated embeding vector. """
 
     @classmethod
-    def _tokenize(cls, sentence: str) -> List[str]:
+    def _tokenize(cls, sentence: str) -> t.List[str]:
         tks = SNLI._tokenize(sentence)
         return tks + ['<BLANK>'] * (101 - len(tks))
 
@@ -260,7 +282,7 @@ def load_embeddings(data_name: str, embedding_name: str):
             embeds = pickle.load(pkl_file)
     else:
         log.info('Build corpus-specific indexed word embedding.')
-        vocab = set()  # type: Set[str]
+        vocab = set()  # type: t.Set[str]
         embeds = globals()[data_name]._init_indexed_word_embedding(
                 embed.init(embedding_name))
         # Serialize for reusing

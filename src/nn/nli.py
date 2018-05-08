@@ -9,10 +9,16 @@ from nn.decomposable import Decomposable
 
 class Ngram(Decomposable):
 
-    def post_project(self,
-            x: tf.Tensor,
-            ngram_size: t.List[int] = [2, 3]):
-        for size in ngram_size:
+    def __init__(self,
+            ngram_size: t.Union[int, t.List[int]] = [2, 3],
+            **kwargs
+            )-> None:
+        self.ngram_size = ngram_size \
+                if isinstance(ngram_size, list) else [ngram_size]
+        super(Ngram, self).__init__(**kwargs)
+
+    def post_project(self, x: tf.Tensor):
+        for size in self.ngram_size:
             x = tf.concat([x, self.ngram_embed(x, size)], 1)
         return x
 
@@ -30,6 +36,7 @@ class Ngram(Decomposable):
                             stddev=weight_stddev),
                     name='%d-gram-conv' % ngram_size,
                     reuse=tf.AUTO_REUSE)
+            t = tf.nn.relu(t)
             t = tf.squeeze(t, [2])
         return t
 

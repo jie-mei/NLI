@@ -6,7 +6,9 @@ data:
   embedding: GloVeNorm
 
 train:
+  device: 'gpu:0'
   validate: False
-  epoch_num: 400
+  epoch_num: 1000
   batch_size: 64
   keep_prob: 0.8
+  seed: 8132

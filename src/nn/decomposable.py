@@ -16,12 +16,14 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             project_dim: int = 200,
             intra_attention: bool = False,
             device: str = 'gpu:1',
+            bias_init: float = 0,
             **kwargs,
             ) -> None:
         super(Decomposable, self).__init__()
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self.device = device
+        self.bias_init = bias_init
         self._class_num = class_num
 
         log.debug('Model train on device %s' % self.device)
@@ -79,6 +81,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             activation_fn: Callable = tf.nn.relu,
             weight_stddev: float = 0.01,
             bias: bool = True,
+            bias_init: float = None,
             keep_prob: float = None,
             scope: Union[str, tf.VariableScope] = None,
             reuse: bool = tf.AUTO_REUSE,
@@ -107,10 +110,16 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
                     t = tf.reshape(t, [-1, t.shape[2]])
                 t = tf.matmul(t, w)
                 if bias:
+                    if bias_init is None:
+                        bias_init = self.bias_init
+                    if bias_init == 0:
+                        init = tf.initializers.zeros()
+                    else:
+                        init = tf.initializers.constant(bias_init)
                     b = tf.get_variable('bias',
                             shape=[dim],
                             dtype=tf.float32,
-                            initializer=tf.initializers.zeros())
+                            initializer=init)
                     t += b
                 if output_rank == 3:
                     t = tf.reshape(t, [-1, t_shape[1], dim])

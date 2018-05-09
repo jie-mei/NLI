@@ -198,6 +198,7 @@ def train(name: str,
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
           data_pad: bool = True,
+          data_seed: int = None,
           record_every: int = 1000,
           validate_every: int = 10000,
           save_every: int = 100000,
@@ -212,7 +213,7 @@ def train(name: str,
 
     # Network setup
     model = getattr(nn, model_type)(
-            embeddings=data.load_embeddings(data_name, data_embedding),
+            embeddings=data.load_embeddings(data_name, data_embedding, data_seed),
             **kwargs)
     log.info(str(model))
     log.debug('Model parameters:\n\n\t' +
@@ -237,7 +238,8 @@ def train(name: str,
 
         train_iter, train_hd = _make_dataset_iterator(
                 type_name='one_shot_iterator',
-                dataset=data.load_dataset(data_name, 'train', data_embedding),
+                dataset=data.load_dataset(
+                        data_name, 'train', data_embedding, data_seed),
                 batch_size=batch_size,
                 bucket_boundaries=[20, 50],
                 pad=data_pad,
@@ -246,14 +248,16 @@ def train(name: str,
                 session=sess)
         valid_iter, valid_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
-                dataset=data.load_dataset(data_name, 'validation', data_embedding),
+                dataset=data.load_dataset(
+                        data_name, 'validation', data_embedding, data_seed),
                 batch_size=batch_size,
                 shuffle=False,
                 pad=data_pad,
                 session=sess)
         test_iter, test_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
-                dataset=data.load_dataset(data_name, 'test', data_embedding),
+                dataset=data.load_dataset(
+                        data_name, 'test', data_embedding, data_seed),
                 batch_size=batch_size,
                 shuffle=False,
                 pad=data_pad,

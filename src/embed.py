@@ -43,9 +43,14 @@ class IndexedWordEmbedding(WordEmbedding):
     def __init__(self,
                  vocab: Set[str],
                  embedding: WordEmbedding,
-                 oov_embed_fn: Callable[[str], np.ndarray]
+                 oov_embed_fn: Callable[[str], np.ndarray],
+                 seed: int = None
                  ) -> None:
         super(IndexedWordEmbedding, self).__init__(embedding.dim, vocab)
+        if seed:
+            self.seed = seed
+            log.debug('Set numpy random seed to %d' % self.seed)
+            np.random.seed(self.seed)
         # Copy embeddings from the given word embedding object.
         self.__ids, self.__embeds = {}, None  # type: Dict[str, int], np.ndarray
         self.__is_oov = [False] * len(vocab)

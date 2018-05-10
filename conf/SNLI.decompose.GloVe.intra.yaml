@@ -1,16 +1,16 @@
-# test:  78.07
-
 model:
   class_num: 3
   intra_attention: True
+  bias_init: 0.01
 
 data:
   name: SNLI
-  preproc: Tokenize
-  embedding: GloVe
+  embedding: GloVeNorm
+  seed: 6523
 
 train:
-  validate: False
-  epoch_num: 100
+  learning_rate: 0.025
+  epoch_num: 1000
   batch_size: 64
   keep_prob: 0.8
+  seed: 1234

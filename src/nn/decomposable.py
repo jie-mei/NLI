@@ -17,7 +17,6 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             intra_attention: bool = False,
             device: str = 'gpu:1',
             bias_init: float = 0,
-            **kwargs,
             ) -> None:
         super(Decomposable, self).__init__()
         self.project_dim = project_dim
@@ -47,7 +46,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             project = lambda x: self.linear(x, self.project_dim, bias=False)
             x1, x2 = map(project, [x1, x2])
             # Post-projection processing
-            x1, x2 = map(self.post_project, [x1, x2])
+            x1, x2 = self.post_project(x1, x2)
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
         with tf.variable_scope('attent') as s:
@@ -145,8 +144,8 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             return t
 
 
-    def post_project(self, x):
-        return x
+    def post_project(self, x1, x2):
+        return x1, x2
 
 
     def attention(self,
@@ -171,15 +170,16 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
     def intra(self, x1, x2):
         """ Intra-attention layer. """
         with tf.variable_scope('intra') as s:
-            with tf.name_scope('distance_bias'):
-                idx = tf.range(0, self.seq_len, 1)
-                dist = tf.abs(tf.expand_dims(idx, 0) - tf.expand_dims(idx, 1))
-                bias = tf.get_variable('bias', [1])
-                bias *= tf.cast(dist >= 10, tf.float32)
-                bias = tf.expand_dims(bias, 0)
             def attent(x):
+                with tf.variable_scope('distance_bias', reuse=tf.AUTO_REUSE):
+                    idx = tf.range(0, tf.shape(x)[1], 1)
+                    dist = tf.abs(tf.expand_dims(idx, 0) - tf.expand_dims(idx, 1))
+                    bias = tf.get_variable('bias', [1])
+                    bias *= tf.cast(dist >= 10, tf.float32)
+                    bias = tf.expand_dims(bias, 0)
                 att = self.attention(x, x)
-                xp = tf.einsum('bik,bkj->bij', tf.nn.softmax(att + bias), x)
+                pan = tf.nn.softmax(att + bias)
+                xp = tf.einsum('bik,bkj->bij', pan, x)
                 return tf.concat([x, xp], 2)
             return map(attent, [x1, x2])
 

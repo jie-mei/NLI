@@ -1,0 +1,13 @@
+model:
+  class_num: 3
+
+data:
+  name: SNLI
+  preproc: Tokenize
+  embedding: FastText
+
+train:
+  validate: False
+  epoch_num: 100
+  batch_size: 64
+  keep_prob: 0.8

@@ -4,6 +4,7 @@ from typing import Dict, Set, Union, Callable
 
 import gensim
 from gensim.scripts.glove2word2vec import glove2word2vec
+from gensim.models.wrappers import FastText
 import numpy as np
 import spacy
 
@@ -131,6 +132,15 @@ class GloVe(PretrainedEmbedding):
         if not os.path.exists(gensim_path):
             glove2word2vec(path, gensim_path)
         super(GloVe, self).__init__(gensim_path, dim, binary, **kwargs)
+
+
+class FastText(PretrainedEmbedding):
+    def __init__(self,
+                 path='/home/xjiang/data/crawl-300d-2M.vec',
+                 dim=300,
+                 binary=False,
+                 **kwargs):
+        super(FastText, self).__init__(path, dim, binary, **kwargs)
 
 
 class GloVeNorm(GloVe):

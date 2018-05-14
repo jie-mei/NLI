@@ -1,11 +1,15 @@
 import data
 
-train_tags = data.load_dataset('SNLI', 'train', 'GloVeNorm').TAGS
-val_tags   = data.load_dataset('SNLI', 'validation', 'GloVeNorm').TAGS
-test_tags  = data.load_dataset('SNLI', 'test', 'GloVeNorm').TAGS
+train_data = data.load_dataset('SNLI', 'train', 'GloVeNorm', 6523)
+val_data   = data.load_dataset('SNLI', 'validation', 'GloVeNorm', 6523)
+test_data  = data.load_dataset('SNLI', 'test', 'GloVeNorm', 6523)
 
-print(train_tags)
-tags = {**train_tags, **val_tags, **test_tags}
+tags = set()  # type: ignore
+
+for dset in [train_data, val_data, test_data]:
+    for feat in dset.x1_feats + dset.x2_feats:
+        for tag in feat[1]:
+            tags.add(tag)
 
 print(tags)
 print(len(tags))

@@ -1,7 +1,6 @@
 model:
-  model_type: ConvNgram
+  model_type: Syntactic
   class_num: 3
-  ngram_size: 2
   bias_init: 0.01
 
 data:
@@ -10,7 +9,7 @@ data:
   seed: 6523
 
 train:
-  epoch_num: 400
+  epoch_num: 1000
   batch_size: 64
   keep_prob: 0.8
   seed: 1234

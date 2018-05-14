@@ -1,7 +1,7 @@
 model:
-  model_type: ConvNgram
+  model_type: TagGatedConvNgram
   class_num: 3
-  ngram_size: 2
+  ngram_size: 1
   bias_init: 0.01
 
 data:

@@ -42,16 +42,20 @@ def _make_dataset(
         repeat_time: The number of times the records in the dataset are
             repeated.
     """
-    output_shapes = ([None], [None], [], [], [], [None], [None]) # type: tuple
+    output_shapes = ([None], [None], [], [], [],
+                     [None, 4], [None, 4],
+                     [None], [None]) # type: tuple
     dset = tf.data.Dataset.from_generator(
-            lambda: ((x1, x2, y, len(x1), len(x2), feat1, feat2)
+            lambda: ((x1, x2, y, len(x1), len(x2),
+                            feat1[0], feat2[0],  # templates
+                            feat1[1], feat2[1])  # tags
                      for x1, x2, y, feat1, feat2 in
                      zip(dataset.x1_ids,
                          dataset.x2_ids,
                          dataset.labels,
                          dataset.x1_feats,
                          dataset.x2_feats)),
-            output_types=(tf.int32,) * 7,
+            output_types=(tf.int32,) * 9,
             output_shapes=output_shapes)
     dset = dset.cache()
 
@@ -74,7 +78,7 @@ def _make_dataset(
                 log.debug('Generate batches using '
                           'tf.contrib.data.bucket_by_sequence_length')
                 dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
-                        (lambda x1, x2, y, len1, len2, t1, t2:
+                        (lambda x1, x2, y, len1, len2, temp1, temp2, tag1, tag2:
                                 tf.maximum(len1, len2)),
                         bucket_boundaries,
                         [batch_size] * (len(bucket_boundaries) + 1)))

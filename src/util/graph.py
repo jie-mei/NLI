@@ -8,8 +8,11 @@ def print_trainable_variables():
     fmt = '%-40s  %-20s  %10d'
     total = 0
     for v in tf.trainable_variables():
-        num = reduce(lambda x, y: (x)*y, map(int, v.get_shape()))
-        total += num
-        output += fmt % (v.name, v.get_shape(), num) + '\n'
+        try:
+            num = reduce(lambda x, y: (x)*y, map(int, v.get_shape()))
+            total += num
+            output += fmt % (v.name, v.get_shape(), num) + '\n'
+        except ValueError:
+            output += fmt % (v.name, 'Unknown', 0) + '\n'
     output += fmt % ('total', '', total) + '\n'
     return output

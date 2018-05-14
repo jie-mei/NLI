@@ -52,7 +52,7 @@ class Dataset(ABC):
             words = self._tokenize(x_text_in)
             x_words_out.append(words)
             x_ids_out.append([self.word_embedding.get_id(w) for w in words])
-            x_feats_out.append(self._feats_preproc(x_feats_in))
+            x_feats_out.append(x_feats_in)
         for text1, text2, label, feats1, feats2 in self.parse(mode):
             preproc(text1, feats1, self.x1_words, self.x1_ids, self.x1_feats)
             preproc(text2, feats2, self.x2_words, self.x2_ids, self.x2_feats)
@@ -84,15 +84,6 @@ class Dataset(ABC):
         stemming, can be optionally applied by overriding this method.
         """
         return nltk.word_tokenize(sentence)
-
-    @classmethod
-    def _feats_preproc(cls, features: t.Any) -> t.List[t.Any]:
-        """ Sentence feature preprocessing.
-
-        Different preprocessing functions can be applied by overriding this
-        method.
-        """
-        return features
 
     @classmethod
     def _oov_assign(cls, word: str, dim: int) -> np.array:
@@ -137,6 +128,96 @@ class MSRP(Dataset):
                     yield s1, s2, int(label), _, _
 
 
+class ParseTree:
+    def __init__(self, tag):
+        self.tag = tag
+        self.word = None
+        self.children = []
+
+    def __repr__(self):
+        children = ' '.join(map(repr, self.children)) if self.children else ''
+        return '(%s%s%s)' % (self.tag,
+                             ' ' + self.word if self.word else '',
+                             ' ' + children if children else '')
+
+    def get_leafs(self):
+        """ Represents the leaf nodes as a list of words and a list of
+        crosspoonding tags. """
+        words, tags = [], []
+        def postorder(tree):
+            if tree:
+                for c in tree.children:
+                    postorder(c)
+                if tree.word:
+                    words.append(tree.word)
+                    tags.append(tree.tag)
+        postorder(self)
+        return words, tags
+
+    def get_internals(self, drop_size=None):
+        """ Represents the internal nodes as a list of direct children tuples
+        and crossponding tags. For example, given a parse tree
+
+                 6 (ROOT)
+                 /      \
+              4 (NP)   5 (VP)
+               /       /   \
+            1 (NN)  2 (V)  3 (NN)
+
+        This function returns: [[1], [2, 3], [4, 5]], [NP, VP, ROOT].
+
+        Args:
+            drop_size: drop the internal nodes and their parents with size
+                greater than the drop size.
+        """
+        nodes, tags = [], []
+        self.__top_leaf = 0
+        self.__top_intl = len(self.get_leafs()[0])
+        def postorder(tree):
+            if tree:
+                cidx = [postorder(c) for c in tree.children]
+                if not all(cidx):
+                    return 0
+                if tree.word:
+                    self.__top_leaf = self.__top_leaf + 1
+                    return self.__top_leaf
+                else:
+                    if drop_size and len(tree.children) > drop_size:
+                        return 0
+                    nodes.append(tuple(cidx))
+                    tags.append(tree.tag)
+                    self.__top_intl = self.__top_intl + 1
+                    return self.__top_intl
+        postorder(self)
+        return nodes, tags
+
+
+    @staticmethod
+    def parse(string) -> 'ParseTree':
+        """ Parse the syntax tree given the sentence parse marker. This
+        function returns two lists of tokens and crossponding POS tags,
+        respectively. """
+        unit_ptn = r'(\(|\)|[^()\s]+)'
+        units = re.findall(unit_ptn, string)
+        idx = 0
+        stk = []  # type: list
+        word = None
+        while True:
+            curr = units[idx]
+            if curr == '(':
+                stk += ParseTree(units[idx + 1]),
+                idx += 1
+            elif curr == ')':
+                node = stk.pop()
+                if stk:
+                    stk[-1].children += node,
+                else:
+                    return node
+            else:
+                stk[-1].word = curr
+            idx += 1
+
+
 class SNLI(Dataset):
     DATA_FILES = {'train':      ['data/SNLI/SNLI-train.tsv'],
                   'validation': ['data/SNLI/SNLI-dev.tsv'],
@@ -147,37 +228,32 @@ class SNLI(Dataset):
               'contradiction': 1,
               'entailment':    2}
 
+    TEMP_DROP_VAL = 4
+
     def __init__(self, *args, **kwargs)-> None:
         super(SNLI, self).__init__(*args, **kwargs)
         self.tags = {}  # type: t.Dict[str, int]
         for mode in ['train', 'validation', 'test']:
-            for _, _, label, tags1, tags2 in self.parse(mode):
+            for _, _, label, (_, tags1), (_, tags2) in self.parse(mode):
                 for tag in tags1 + tags2:
                     if tag not in self.tags:
                         self.tags[tag] = len(self.tags)
-        # Transform tags to tag IDs.
-        for feats in [self.x1_feats, self.x2_feats]:
-            for i in range(len(feats)):
-                feats[i] = [self.tags[t] for t in feats[i]]
+        for feats in self.x1_feats + self.x2_feats:
+            # Pad template to 3-element-tuples
+            for i in range(len(feats[0])):
+                feats[0][i] = list(feats[0][i]) \
+                            + [0] * (self.TEMP_DROP_VAL - len(feats[0][i]))
+            if not feats[0]:
+                # To aviod zero shape error in TF
+                feats[0] = [[0] * self.TEMP_DROP_VAL]
+            # Transform tags to tag IDs
+            feats[1] = [self.tags[t] for t in feats[1]]
 
     @classmethod
     def parse(cls, mode: str) \
             -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
                            None,
                            None]:
-        def parse_sentence(sent):
-            # Remove all brackets.
-            return re.sub(r'(\(|\)) ?', '', sent)
-        def parse_tree(string):
-            """ Parse the syntax tree given the sentence parse marker. This
-            function returns two lists of tokens and crossponding POS tags,
-            respectively. """
-            tags, words = [], []
-            for mo in re.finditer(r'\(([^\s()]+) ([^\s()]+)\)', string):
-                tag, word = mo.group(1, 2)
-                tags += tag,
-                words += word,
-            return tags, words
         for data_file in cls.DATA_FILES[mode]:
             with open(data_file, 'r', encoding='utf-8') as f:
                 f.readline()  # skip the heading line
@@ -185,11 +261,14 @@ class SNLI(Dataset):
                     fields  = line.strip().split('\t')
                     label = cls.LABELS.get(fields[0], None)
                     if label is not None:  # skip the non-relation pairs
-                        tags1, words1 = parse_tree(fields[3])
-                        tags2, words2 = parse_tree(fields[4])
-                        sent1 = ' '.join(words1)
-                        sent2 = ' '.join(words2)
-                        yield (sent1, sent2, label, tags1, tags2)
+                        def process(field):
+                            tree = ParseTree.parse(field)
+                            words, w_tags = tree.get_leafs()
+                            intls, i_tags = tree.get_internals(cls.TEMP_DROP_VAL)
+                            return ' '.join(words), intls, w_tags + i_tags
+                        s1, temp1, tags1 = process(fields[3])
+                        s2, temp2, tags2 = process(fields[4])
+                        yield (s1, s2, label, [temp1, tags1], [temp1, tags2])
 
     @classmethod
     def _tokenize(cls, sentence: str) -> t.List[str]:

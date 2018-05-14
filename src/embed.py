@@ -4,7 +4,6 @@ from typing import Dict, Set, Union, Callable
 
 import gensim
 from gensim.scripts.glove2word2vec import glove2word2vec
-from gensim.models.wrappers import FastText
 import numpy as np
 import spacy
 

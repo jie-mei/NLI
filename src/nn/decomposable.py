@@ -63,12 +63,12 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             # CHANGE
             v1 = tf.reduce_sum(v1, axis=1)
             v2 = tf.reduce_sum(v2, axis=1)
+            y_hat = self.forward(tf.concat([v1, v2], 1))
             #def reduce_mean(x, x_len):
             #    return (tf.reduce_sum(x, axis=1) /
             #            tf.expand_dims(tf.cast(x_len, tf.float32), -1))
             #v1 = reduce_mean(v1 * mask1, self.len1)
             #v2 = reduce_mean(v2 * mask2, self.len2)
-            y_hat = self.forward(tf.concat([v1, v2], 1))
             y_hat = self.linear(y_hat, dim=self._class_num)
 
         self.evaluate_and_loss(y_hat)
@@ -99,8 +99,10 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         with tf.device(device):
             with tf.variable_scope(scope if scope else 'linear', reuse=reuse):
                 t_shape = tf.shape(t)
+                #import pdb; pdb.set_trace()
+                #print(t.get_shape(), t.get_shape()[-1])
                 w = tf.get_variable('weight',
-                        shape=[t.get_shape().as_list()[-1], dim],
+                        shape=[t.get_shape()[-1], dim],
                         dtype=tf.float32,
                         initializer=tf.initializers.truncated_normal(
                                 stddev=weight_stddev))

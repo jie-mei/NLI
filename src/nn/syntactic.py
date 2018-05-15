@@ -52,9 +52,9 @@ class Syntactic(Decomposable):
             # shape: [batch, 1]
 
             i = tf.constant(0)
-            def loop_cond(i, tree):
+            def loop_cond(i, tree, temp, tag, batch_size):
                 return tf.less(i, tf.shape(temp)[1])
-            def loop_body(i, tree):
+            def loop_body(i, tree, temp, tag, batch_size):
                 c_idx = tf.gather(temp, i, axis=1)
                 # shape: [batch, temp_size, 2]
                 p_idx = tf.concat(
@@ -73,9 +73,10 @@ class Syntactic(Decomposable):
                         updates=p_embed,
                         shape=tf.shape(tree))
                 i += 1
-                return i, tree
-            i_loop, x_loop = tf.while_loop(loop_cond, loop_body, [i, tree],
-                    #shape_invariants=[[1], list(tf.shape(tree))],
+                return [i, tree, temp, tag, batch_size]
+            _, x_loop, _, _, _ = tf.while_loop(loop_cond, loop_body,
+                    [i, tree, temp, tag, batch_size],
+                    maximum_iterations=1,
                     parallel_iterations=1)
             return x_loop
 

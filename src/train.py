@@ -208,6 +208,7 @@ def train(name: str,
           save_every: int = 100000,
           profiling: bool = False,
           seed: int = None,
+          debug: bool = False,
           **kwargs
           ) -> None:
 
@@ -234,6 +235,10 @@ def train(name: str,
     optim = _make_optimizer(optimizer_type, learning_rate=learning_rate).minimize(model.loss)
 
     with tf.Session(config=_make_config()) as sess:
+        if debug:
+            from tensorflow.python import debug as tf_debug
+            sess = tf_debug.LocalCLIDebugWrapperSession(sess)
+
         sess.run(tf.global_variables_initializer())
 
         train_wtr = tf.summary.FileWriter(os.path.join(model_path, 'train'), sess.graph)

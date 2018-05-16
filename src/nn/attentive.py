@@ -1,90 +1,144 @@
 """ Prediction models.
 """
 
-from abc import ABC, abstractmethod
-import sys
-from typing import List, Union, Tuple
+import typing as t
 
-import tensorflow as tf
 import numpy as np
+import tensorflow as tf
 
-import nn
-import attention
-import encode
-import evaluate
-from util.annotation import name_scope
-from util.display import ReprMixin
+import embed
+import op
+from nn.base import Model, SoftmaxCrossEntropyMixin
+from util.log import exec_log as log
+from util.debug import *
 
 
-class AttentiveModel(nn.Model):
-    """ A basic NN model to conduct pairwised text analysis.
+class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
 
-    Attributes:
-        text_max_len: The maximum number of words in a text.
-        filter_width: The width of the filter.
-    """
     def __init__(self,
-                 text_max_len: int,
-                 word_embeddings: np.ndarray,
-                 visualize_attention_softmax: bool = False,
-                 visualize_saliency_softmax: bool = False,
-                 attention: str = 'NoAttention',
-                 encoder: str = 'NoEncode',
-                 evaluator: str = 'CosineMSE',
-                 **kwargs
-                 ) -> None:
-        self.text_max_len = text_max_len
+            embeddings: embed.IndexedWordEmbedding,
+            class_num: int,
+            project_dim: int = 200,
+            intra_attention: bool = False,
+            device: str = 'gpu:1',
+            bias_init: float = 0,
+            ) -> None:
+        super(AttentiveModel, self).__init__()
+        self.project_dim = project_dim
+        self.intra_attention = intra_attention
+        self.device = device
+        self.bias_init = bias_init
+        self._class_num = class_num
 
-        input_shape = [None, self.text_max_len]
-        self.x1 = tf.placeholder(tf.int32, name="x1", shape=input_shape)
-        self.x2 = tf.placeholder(tf.int32, name="x2", shape=input_shape)
-        self.y = tf.placeholder(tf.int32, name="y", shape=[None])
+        log.debug('Model train on device %s' % self.device)
 
-        def count_seq_len(x):
-            return tf.count_nonzero(x, 1, keep_dims=True, dtype=tf.float32)
-        self.len1, self.len2 = map(count_seq_len, [self.x1, self.x2])
+        with tf.device(self.device):
+            self.keep_prob = tf.placeholder(tf.float32, shape=[])
 
-        embed1 = nn.layer.embedding(self.x1, word_embeddings)
-        embed2 = nn.layer.embedding(self.x2, word_embeddings)
+        def mask(x, x_len):
+            # Explict mask the paddings.
+            mask = tf.sequence_mask(x_len, tf.shape(x)[1], dtype=tf.float32)
+            return tf.expand_dims(mask, -1)
+        # mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
-        with tf.name_scope('encode'):
-            self.encoder = self._init_component(encode, encoder, 'encode_', kwargs)
-            #x1, x2 = self.encoder.encode(embed1, embed2)
-            embed1, embed2 = self.encoder.encode(embed1, embed2)
+        with tf.variable_scope('embed') as s:
+            with tf.device(self.device):
+                embed = tf.constant(embeddings.get_embeddings(),
+                                    dtype=tf.float32,
+                                    name='embeddings')
+            x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
+            # Linear projection
+            project = lambda x: self.linear(x, self.project_dim, bias=False)
+            x1, x2 = map(project, [x1, x2])
+            # Post-projection processing
+            x1, x2 = self.post_project(x1, x2)
+            x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
-        with tf.variable_scope('attention', reuse=tf.AUTO_REUSE):
-            self.attention = self._init_component(sys.modules['attention'],
-                    attention, 'attention_', kwargs)
-            x1, x2, alpha1, alpha2 = self.attention.attent(embed1, embed2)
+        with tf.variable_scope('attent') as s:
+            sim = self.attention(x1, x2)
+            # sim *= mask1 * tf.matrix_transpose(mask2)
+            alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
+            beta  = tf.matmul(tf.nn.softmax(sim), x2)
+        
+        with tf.variable_scope('compare') as s:
+            v1 = self.forward(tf.concat([x1, beta,  x1 - beta,  x1 * beta],  2))
+            v2 = self.forward(tf.concat([x2, alpha, x2 - alpha, x2 * alpha], 2))
 
-        with tf.variable_scope('evaluate', reuse=tf.AUTO_REUSE):
-            def text_embeddings(x, x_len):
-                return tf.reduce_sum(x, axis=2) / x_len
-            x1 = text_embeddings(x1, self.len1)
-            x2 = text_embeddings(x2, self.len2)
+        with tf.variable_scope('aggregate') as s:
+            # CHANGE
+            #def reduce_mean(x, x_len):
+            #    return (tf.reduce_sum(x, axis=1) /
+            #            tf.expand_dims(tf.cast(x_len, tf.float32), -1))
+            def reduce_mean(x, x_len):
+                return (tf.reduce_sum(x, axis=1) /
+                        tf.cast(tf.shape(x)[1], tf.float32))
+            v = tf.concat([
+                    #reduce_mean(v1, self.len1),
+                    #reduce_mean(v2, self.len2),
+                    tf.reduce_max(v1, axis=1),
+                    tf.reduce_max(v2, axis=1),
+                    tf.reduce_sum(v1, axis=1),
+                    tf.reduce_sum(v2, axis=1)
+                    ], 1)
+            #v = tf_Print(v, [self.x1], message='x1=')
+            #v = tf_Print(v, [self.len1], message='len1=')
+            #v = tf_Print(v, [v1[:,:,0]], message='v1[,,0]=')
+            y_hat = self.forward(v)
+            y_hat = self.linear(y_hat, dim=self._class_num)
 
-            self.evaluator = self._init_component(evaluate, evaluator, 'evaluate_',
-                    kwargs)
-            # self.prediction is discrete and thus non-differentiable, we need to keep the probability for saliency map
-            self.prediction, self.probability = self.evaluator.predict(x1, x2)
-            self.performance = self.evaluator.evaluate(self.prediction, self.y)
-        self.loss = self.evaluator.loss(x1, x2)
+        self.evaluate_and_loss(y_hat)
 
-        with tf.name_scope('visualize'):
-            with tf.name_scope('activation'):
-                if len(alpha1.shape) > 2 and int(alpha1.shape[1]) > 1:
-                    alpha1 = tf.reduce_sum(alpha1, axis=1, keep_dims=True)
-                    alpha2 = tf.reduce_sum(alpha2, axis=1, keep_dims=True)
-                self.x1_att, self.x2_att = alpha1, alpha2
-                if visualize_attention_softmax:
-                    self.x1_att, self.x2_att = map(tf.contrib.layers.softmax,
-                                                   [self.x1_att, self.x2_att])
-            with tf.name_scope('saliency'):
-                def saliency_map(x_embed):
-                    dy_dx = tf.gradients(ys=self.probability, xs=x_embed)
-                    sal = tf.reduce_mean(dy_dx[0], axis=1)
-                    return sal / tf.reduce_sum(sal, axis=1, keep_dims=True)
-                self.x1_sal, self.x2_sal = map(saliency_map, [embed1, embed2])
-                if visualize_saliency_softmax:
-                    self.x1_sal, self.x2_sal = map(tf.contrib.layers.softmax,
-                                                   [self.x1_sal, self.x2_sal])
+
+    def linear(self, inputs: tf.Tensor, dim: int, bias=True):
+        return op.linear(inputs, dim, activation_fn=None, bias=bias)
+
+
+    def forward(self, 
+            inputs: tf.Tensor,
+            scope: t.Union[str, tf.VariableScope] = None):
+        scope = scope if scope else 'forward'
+        kwargs = {'dim': self.project_dim,
+                  'keep_prob': self.keep_prob,
+                  'weight_init': tf.truncated_normal_initializer(stddev=0.01)}
+        with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+            t = op.linear(inputs, scope='linear-1', **kwargs)
+            t = op.linear(t, scope='linear-2', **kwargs)
+            return t
+
+
+    def post_project(self, x1, x2):
+        return x1, x2
+
+
+    def attention(self,
+            x1: tf.Tensor,
+            x2: tf.Tensor,
+            scope: t.Union[str, tf.VariableScope] = None,
+            ):
+        """
+        Inputs:  [batch, seq_len_1, embed_dim]
+                 [batch, seq_len_2, embed_dim]
+        Returns: [batch, seq_len_1, seq_len_2]
+        """
+        with tf.name_scope('attention') as s:
+            x1 = self.forward(x1)
+            x2 = self.forward(x2)
+            return tf.matmul(x1, tf.matrix_transpose(x2))
+
+
+    def intra(self, x1, x2):
+        """ Intra-attention layer. """
+        with tf.variable_scope('intra') as s:
+            def attent(x):
+                with tf.variable_scope('distance_bias', reuse=tf.AUTO_REUSE):
+                    idx = tf.range(0, tf.shape(x)[1], 1)
+                    dist = tf.abs(tf.expand_dims(idx, 0) - tf.expand_dims(idx, 1))
+                    bias = tf.get_variable('bias', [1])
+                    bias *= tf.cast(dist >= 10, tf.float32)
+                    bias = tf.expand_dims(bias, 0)
+                att = self.attention(x, x)
+                pan = tf.nn.softmax(att + bias)
+                xp = tf.einsum('bik,bkj->bij', pan, x)
+                return tf.concat([x, xp], 2)
+            return map(attent, [x1, x2])
+

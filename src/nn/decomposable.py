@@ -1,9 +1,10 @@
-from typing import Union, Callable
+import typing as t
 
 import numpy as np
 import tensorflow as tf
 
 import embed
+import op
 from nn.base import Model, SoftmaxCrossEntropyMixin
 from util.log import exec_log as log
 
@@ -74,62 +75,8 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         self.evaluate_and_loss(y_hat)
 
 
-    def _linear(self,
-            inputs: tf.Tensor,
-            dim: int = -1,
-            activation_fn: Callable = tf.nn.relu,
-            weight_stddev: float = 0.01,
-            bias: bool = True,
-            bias_init: float = None,
-            keep_prob: float = None,
-            scope: Union[str, tf.VariableScope] = None,
-            reuse: bool = tf.AUTO_REUSE,
-            device: str = None
-            ):
-        """
-        Inputs:  3D-Tensor [batch, seq_len, input_dim], or
-                 2D-Tensor [batch, input_dim]
-        Returns: 3D-Tensor [batch, seq_len, dim], or
-                 2D-Tensor [batch, dim]
-        """
-        keep_prob = keep_prob if keep_prob else self.keep_prob
-        device = device if device else self.device
-        dim = dim if dim > 0 else int(inputs.shape[-1])
-        t = tf.nn.dropout(inputs, keep_prob)
-        with tf.device(device):
-            with tf.variable_scope(scope if scope else 'linear', reuse=reuse):
-                t_shape = tf.shape(t)
-                #import pdb; pdb.set_trace()
-                #print(t.get_shape(), t.get_shape()[-1])
-                w = tf.get_variable('weight',
-                        shape=[t.get_shape()[-1], dim],
-                        dtype=tf.float32,
-                        initializer=tf.initializers.truncated_normal(
-                                stddev=weight_stddev))
-                output_rank = len(t.get_shape())
-                if output_rank == 3:
-                    t = tf.reshape(t, [-1, t.shape[2]])
-                t = tf.matmul(t, w)
-                if bias:
-                    if bias_init is None:
-                        bias_init = self.bias_init
-                    if bias_init == 0:
-                        init = tf.initializers.zeros()
-                    else:
-                        init = tf.initializers.constant(bias_init)
-                    b = tf.get_variable('bias',
-                            shape=[dim],
-                            dtype=tf.float32,
-                            initializer=init)
-                    t += b
-                if output_rank == 3:
-                    t = tf.reshape(t, [-1, t_shape[1], dim])
-                t = activation_fn(t) if activation_fn else t
-        return t
-
-
     def linear(self, inputs: tf.Tensor, dim: int, bias=True):
-        return self._linear(inputs, dim,
+        return op.linear(inputs, dim,
                 keep_prob=1.0,
                 activation_fn=None,
                 bias=bias)
@@ -137,12 +84,12 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
 
     def forward(self, 
             inputs: tf.Tensor,
-            scope: Union[str, tf.VariableScope] = None,
+            scope: t.Union[str, tf.VariableScope] = None,
             ):
         scope = scope if scope else 'forward'
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-            t = self._linear(inputs, self.project_dim, scope='linear-1')
-            t = self._linear(t, scope='linear-2')
+            t = op.linear(inputs, self.project_dim, scope='linear-1')
+            t = op.linear(t, scope='linear-2')
             return t
 
 
@@ -153,7 +100,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
     def attention(self,
             x1: tf.Tensor,
             x2: tf.Tensor,
-            scope: Union[str, tf.VariableScope] = None,
+            scope: t.Union[str, tf.VariableScope] = None,
             ):
         """
         Inputs:  [batch, seq_len_1, embed_dim]
@@ -161,9 +108,6 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
-            #sim = (tf.expand_dims(self.forward(x1), 2) *
-            #       tf.expand_dims(self.forward(x2), 1))
-            #sim = tf.reduce_sum(sim, axis=3)
             x1 = self.forward(x1)
             x2 = self.forward(x2)
             return tf.matmul(x1, tf.matrix_transpose(x2))

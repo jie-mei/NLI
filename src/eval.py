@@ -1,4 +1,6 @@
-""" Model training. """
+#!/usr/bin/env python
+
+""" Model evaluation. """
 
 import os
 import sys
@@ -192,13 +194,19 @@ def _save_model(session, path, step):
     return save_path
 
 
+def _restore_model(session, path, step):
+    meta_path = build.get_save_path()
+    save_path = tf.train.import_meta_graph()
+    return save_path
+
+
 def train(name: str,
+          model_type: str,
           batch_size: int = 256,
           epoch_num: int = 200,
           keep_prob: float = 0.8,
           learning_rate: float = 0.05,
           optimizer_type: str = 'AdagradOptimizer',
-          model_type: str = 'Decomposable',
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
           data_pad: bool = True,
@@ -314,19 +322,80 @@ def train(name: str,
             log.info('Training finished!')
 
 
+def test(name: str,
+         model_type: str,
+         step: int = None,
+         mode: str = 'test',
+         data_seed: int = None,
+         data_name: str = 'SNLI',
+         data_embedding: str = 'GloVe',
+         data_pad: bool = True,
+         batch_size: int = 10,
+         **kwargs,
+         ) -> None:
+    model_path = build.get_model_path(name)
+
+    model = getattr(nn, model_type)(
+            embeddings=data.load_embeddings(data_name, data_embedding, data_seed),
+            **kwargs)
+    log.info(str(model))
+    log.debug('Model parameters:\n\n\t' +
+              '\n\t'.join(graph.print_trainable_variables().split('\n')))
+
+
+    config = tf.ConfigProto()
+    config.gpu_options.allow_growth=True
+
+    with tf.Session(config=_make_config()) as sess:
+        data_iter, data_hd = _make_dataset_iterator(
+                type_name='initializable_iterator',
+                dataset=data.load_dataset(
+                        data_name, mode, data_embedding, data_seed),
+                batch_size=batch_size,
+                shuffle=False,
+                pad=data_pad,
+                session=sess)
+
+        saved_path = build.get_saved_model(model_path, step)
+        log.info('Restore pre-trained model from: %s' % saved_path)
+        tf.train.Saver().restore(sess, saved_path)
+
+        y_preds, y_trues = [], []  # type: ignore
+        sess.run(data_iter.initializer)
+        while True:
+            try:
+                true, pred = sess.run(
+                        [model.y, model.prediction],
+                        feed_dict={model.handle: data_hd,
+                                   model.keep_prob: 1.0})
+                y_preds.extend(np.squeeze(pred).tolist())
+                y_trues.extend(np.squeeze(true).tolist())
+            except tf.errors.OutOfRangeError:
+                break
+
+    # accuracy
+    print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
+    #print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
+
+
 if __name__ == "__main__":
     # Disable the debugging INFO and WARNING information
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     #os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+
     # Testing reads arguments from both file and commend line. Commend line
     # arguments can override ones parsed from file.
-    kwargs = parse.parse_args(sys.argv)
+    mode = sys.argv[1]
+    kwargs = parse.parse_args(sys.argv[1:])
     if 'file' in kwargs:
         # Use the file name as the default model name.
         fname = os.path.basename(kwargs['file'])  # type: ignore
-        kwargs['name'] = fname[:fname.rfind('.')]  # type: ignore
-        kwargs = {**parse.parse_yaml(kwargs['file'], mode='train'), **kwargs}
+        if 'name' not in kwargs:
+            kwargs['name'] = fname[:fname.rfind('.')]  # type: ignore
+        kwargs = {**parse.parse_yaml(kwargs['file'], mode=mode), **kwargs}
         del kwargs['file']
+
     log.debug('Input arguments:\n\n\t%s\n' %
               '\n\t'.join('%-20s %s' % (k + ':', v) for k, v in kwargs.items()))
-    train(**kwargs) # type: ignore
+
+    locals()[mode](**kwargs) # type: ignore

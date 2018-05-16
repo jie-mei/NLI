@@ -1,4 +1,5 @@
 model:
+  model_type: Decomposable
   class_num: 3
   bias_init: 0.01
 

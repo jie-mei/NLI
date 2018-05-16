@@ -1,5 +1,5 @@
 model:
-  model_type: SyntacticForwardAtt
+  model_type: AttentiveModel
   class_num: 3
   bias_init: 0.01
 
@@ -9,6 +9,7 @@ data:
   seed: 6523
 
 train:
+  device: 'gpu:0'
   epoch_num: 1000
   batch_size: 64
   keep_prob: 0.8

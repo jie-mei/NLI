@@ -9,8 +9,12 @@ data:
   seed: 6523
 
 train:
-  device: 'gpu:0'
-  epoch_num: 1000
+  restore_from: 'SNLI.GloVeNorm.Adagrad.att'
+  restore_step: 700000
+  train_regex_list:
+    - 'aggregate/*'
+  learning_rate: 0.5
+  epoch_num: 100
   batch_size: 64
   keep_prob: 0.8
   seed: 1234

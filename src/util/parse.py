@@ -46,8 +46,6 @@ def parse_yaml(path, mode=None):
         raw = yaml.load(conf_file)
         conf = {**flatten(None, raw['model']),
                 **flatten('data', raw['data'])}
-        if mode is 'train' and 'train' in raw:
-            conf = {**conf, **flatten(None, raw['train'])}
-        elif mode is 'test' and 'test' in raw:
-            conf = {**conf, **flatten(None, raw['test'])}
+        if mode and mode in raw:
+                conf = {**conf, **flatten(None, raw[mode])}
         return conf

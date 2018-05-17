@@ -2,8 +2,10 @@
 
 """ Model evaluation. """
 
+import glob
 import os
 import sys
+import re
 import typing as t
 
 import numpy as np
@@ -115,10 +117,11 @@ def _make_dataset(
 def _make_dataset_iterator(
         session: tf.Session,
         type_name: str,
+        handle_name: str,
         **args):
     dataset = _make_dataset(**args)
     iterator = getattr(dataset, 'make_' + type_name)()
-    handle = session.run(iterator.string_handle())
+    handle = session.run(iterator.string_handle(handle_name))
     return iterator, handle
 
 
@@ -139,6 +142,18 @@ def _make_optimizer(type_name: str, **kwargs):
         log.warning('Apply learning rate %f with AdamOptimizer' %
                     kwargs['learning_rate'])
     return getattr(tf.train, type_name)(**kwargs)
+
+
+def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
+    if isinstance(var_regex_list, str):
+        var_regex_list = [var_regex_list]
+    if var_regex_list:
+        pattern_list = [re.compile(regex) for regex in var_regex_list]
+        var_list = [var for var in tf.trainable_variables()
+                    if any(map(lambda p: p.match(var.name), pattern_list))]
+        log.info('Partical updation on parameters: \n\n\t%s\n' %
+                 '\n\t'.join(map(lambda v: v.name, var_list)))
+    return var_list
 
 
 def _make_config():
@@ -187,6 +202,15 @@ def _profile_and_exit(session, model, optimizer, handle):
     exit()
 
 
+def _copy_checkpoint(from_model, to_path, step):
+    """ Copy checkpoint files of a specific training step. """
+    from_path = build.get_model_path(from_model)
+    log.info('Copy step %d checkpoint files from: %s' % (step, from_path))
+    files = glob.glob('{}/model-{}.*'.format(from_path, step))
+    for f in files:
+        shutil.copy(f, to_path)
+
+
 def _save_model(session, path, step):
     save_path = (tf.train.Saver(max_to_keep=100).save(session,
             build.get_save_path(path),
@@ -194,10 +218,10 @@ def _save_model(session, path, step):
     return save_path
 
 
-def _restore_model(session, path, step):
-    meta_path = build.get_save_path()
-    save_path = tf.train.import_meta_graph()
-    return save_path
+def _restore_model(session, model_path, step):
+    saved_path = build.get_saved_model(model_path, step)
+    log.info('Restore pre-trained model from: %s' % saved_path)
+    tf.train.Saver().restore(session, saved_path)
 
 
 def train(name: str,
@@ -207,6 +231,7 @@ def train(name: str,
           keep_prob: float = 0.8,
           learning_rate: float = 0.05,
           optimizer_type: str = 'AdagradOptimizer',
+          train_regex_list: t.Union[t.List[str], str] = None,
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
           data_pad: bool = True,
@@ -214,6 +239,8 @@ def train(name: str,
           record_every: int = 1000,
           validate_every: int = 10000,
           save_every: int = 100000,
+          restore_from: str = None,
+          restore_step: int = None,
           profiling: bool = False,
           seed: int = None,
           debug: bool = False,
@@ -240,14 +267,13 @@ def train(name: str,
         tf.set_random_seed(seed)
 
     # Optimization
-    optim = _make_optimizer(optimizer_type, learning_rate=learning_rate).minimize(model.loss)
+    optim = (_make_optimizer(optimizer_type, learning_rate=learning_rate)
+            .minimize(model.loss, var_list=_search_var_list(train_regex_list)))
 
     with tf.Session(config=_make_config()) as sess:
         if debug:
             from tensorflow.python import debug as tf_debug
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-
-        sess.run(tf.global_variables_initializer())
 
         train_wtr = tf.summary.FileWriter(os.path.join(model_path, 'train'), sess.graph)
         valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
@@ -255,6 +281,7 @@ def train(name: str,
 
         train_iter, train_hd = _make_dataset_iterator(
                 type_name='one_shot_iterator',
+                handle_name='train_handle',
                 dataset=data.load_dataset(
                         data_name, 'train', data_embedding, data_seed),
                 batch_size=batch_size,
@@ -265,6 +292,7 @@ def train(name: str,
                 session=sess)
         valid_iter, valid_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
+                handle_name='valid_handle',
                 dataset=data.load_dataset(
                         data_name, 'validation', data_embedding, data_seed),
                 batch_size=batch_size,
@@ -273,6 +301,7 @@ def train(name: str,
                 session=sess)
         test_iter, test_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
+                handle_name='test_handle',
                 dataset=data.load_dataset(
                         data_name, 'test', data_embedding, data_seed),
                 batch_size=batch_size,
@@ -284,6 +313,18 @@ def train(name: str,
             _profile_and_exit(sess, model, optim, train_hd)
 
         step = 1
+        if restore_from:
+            _copy_checkpoint(restore_from, model_path, restore_step)
+            _restore_model(sess, model_path, restore_step)
+            # evaluate the pretrained model
+            step = restore_step
+            _iterate_dataset(sess, model, valid_iter, valid_hd, valid_wtr, step)
+            _iterate_dataset(sess, model, test_iter, test_hd, test_wtr, step)
+            step += 1
+        else:
+            sess.run(tf.global_variables_initializer())
+            step = 1
+
         pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
         try:
             while True:
@@ -349,6 +390,7 @@ def test(name: str,
     with tf.Session(config=_make_config()) as sess:
         data_iter, data_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
+                handle_name='data_handle',
                 dataset=data.load_dataset(
                         data_name, mode, data_embedding, data_seed),
                 batch_size=batch_size,
@@ -356,9 +398,11 @@ def test(name: str,
                 pad=data_pad,
                 session=sess)
 
-        saved_path = build.get_saved_model(model_path, step)
-        log.info('Restore pre-trained model from: %s' % saved_path)
-        tf.train.Saver().restore(sess, saved_path)
+        #saved_path = build.get_saved_model(model_path, step)
+        #log.info('Restore pre-trained model from: %s' % saved_path)
+        #tf.train.Saver().restore(sess, saved_path)
+
+        _restore_model(sess, model_path, step)
 
         y_preds, y_trues = [], []  # type: ignore
         sess.run(data_iter.initializer)

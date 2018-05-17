@@ -237,7 +237,9 @@ class SNLI(Dataset):
             for _, _, label, (_, tags1), (_, tags2) in self.parse(mode):
                 for tag in tags1 + tags2:
                     if tag not in self.tags:
-                        self.tags[tag] = len(self.tags)
+                        # Starts tag ID at 1 to differenciate with the zero
+                        # paddings
+                        self.tags[tag] = len(self.tags) + 1
         for feats in self.x1_feats + self.x2_feats:
             # Pad template to 3-element-tuples
             for i in range(len(feats[0])):

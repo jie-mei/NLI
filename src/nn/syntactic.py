@@ -4,16 +4,16 @@ import numpy as np
 import tensorflow as tf
 
 import embed
-from nn.decomposable import Decomposable
+from nn.attentive import AttentiveModel
+from util.debug import *
 
 
-class Syntactic(Decomposable):
+class Syntactic(AttentiveModel):
 
     def post_project(self, x1: tf.Tensor, x2: tf.Tensor):
-        with tf.device(self.device):
-            x1 = self.unfold_tree(x1, self.temp1, self.tag1, self.len1, 'x1')
-            x2 = self.unfold_tree(x2, self.temp2, self.tag2, self.len2, 'x2')
-            return x1, x2
+        x1 = self.unfold_tree(x1, self.temp1, self.tag1, self.len1, 'x1')
+        x2 = self.unfold_tree(x2, self.temp2, self.tag2, self.len2, 'x2')
+        return x1, x2
 
 
     def unfold_tree(self,
@@ -44,6 +44,8 @@ class Syntactic(Decomposable):
 
             # Pad a leading 0 to align with the unfolded tree
             tag = tf.pad(tag, [[0, 0], [1, 0]])
+            tag = tf_Print(tag, [tag], message='tag=')
+            #tag = tf_Print(tag, [temp], message='temp=')
             # shape: [batch, 1 + tag_len]
             # NOTE: tag_len <= seq_len + temp_len
 
@@ -56,6 +58,7 @@ class Syntactic(Decomposable):
                 return tf.less(i, tf.shape(temp)[1])
             def loop_body(i, tree, temp, tag, batch_size):
                 c_idx = tf.gather(temp, i, axis=1)
+                #c_idx = tf_Print(c_idx, [i, c_idx], message='c_idx=', first_n=3)
                 # shape: [batch, temp_size, 2]
                 p_idx = tf.concat(
                         [tf.expand_dims(tf.range(batch_size), -1), top + i],
@@ -66,6 +69,7 @@ class Syntactic(Decomposable):
                 c_embed = tf.gather_nd(tree, c_idx)
                 # shape: [batch, temp_size, embed_dim]
                 c_tag = tf.gather_nd(tag, c_idx)
+                c_tag = tf_Print(c_tag, [i, tf.shape(tag), c_tag], message='c_tag=', first_n=3)
                 # shape: [batch, temp_size]
                 p_embed = self.merge_fn(c_embed, c_tag, p_tag)
                 tree += tf.scatter_nd(
@@ -76,7 +80,6 @@ class Syntactic(Decomposable):
                 return [i, tree, temp, tag, batch_size]
             _, x_loop, _, _, _ = tf.while_loop(loop_cond, loop_body,
                     [i, tree, temp, tag, batch_size],
-                    maximum_iterations=1,
                     parallel_iterations=1)
             return x_loop
 

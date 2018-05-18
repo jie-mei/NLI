@@ -153,13 +153,14 @@ def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
                     if any(map(lambda p: p.match(var.name), pattern_list))]
         log.info('Partical updation on parameters: \n\n\t%s\n' %
                  '\n\t'.join(map(lambda v: v.name, var_list)))
-    return var_list
+        return var_list
 
 
 def _make_config():
     config = tf.ConfigProto()
-    #config.gpu_options.allow_growth=True
+    config.gpu_options.allow_growth=True
     config.allow_soft_placement=True
+    #config.log_device_placement=True
     return config
 
 
@@ -309,9 +310,6 @@ def train(name: str,
                 pad=data_pad,
                 session=sess)
 
-        if profiling:
-            _profile_and_exit(sess, model, optim, train_hd)
-
         step = 1
         if restore_from:
             _copy_checkpoint(restore_from, model_path, restore_step)
@@ -324,6 +322,9 @@ def train(name: str,
         else:
             sess.run(tf.global_variables_initializer())
             step = 1
+
+        if profiling:
+            _profile_and_exit(sess, model, optim, train_hd)
 
         pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
         try:
@@ -383,10 +384,6 @@ def test(name: str,
     log.debug('Model parameters:\n\n\t' +
               '\n\t'.join(graph.print_trainable_variables().split('\n')))
 
-
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth=True
-
     with tf.Session(config=_make_config()) as sess:
         data_iter, data_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
@@ -397,10 +394,6 @@ def test(name: str,
                 shuffle=False,
                 pad=data_pad,
                 session=sess)
-
-        #saved_path = build.get_saved_model(model_path, step)
-        #log.info('Restore pre-trained model from: %s' % saved_path)
-        #tf.train.Saver().restore(sess, saved_path)
 
         _restore_model(sess, model_path, step)
 
@@ -419,7 +412,6 @@ def test(name: str,
 
     # accuracy
     print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
-    #print('F1:  %.4f' % sklearn.metrics.f1_score(y_trues, y_preds))
 
 
 if __name__ == "__main__":

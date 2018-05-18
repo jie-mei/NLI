@@ -16,20 +16,15 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             class_num: int,
             project_dim: int = 200,
             intra_attention: bool = False,
-            device: str = 'gpu:1',
             bias_init: float = 0,
             ) -> None:
         super(Decomposable, self).__init__()
         self.project_dim = project_dim
         self.intra_attention = intra_attention
-        self.device = device
         self.bias_init = bias_init
         self._class_num = class_num
 
-        log.debug('Model train on device %s' % self.device)
-
-        with tf.device(self.device):
-            self.keep_prob = tf.placeholder(tf.float32, shape=[])
+        self.keep_prob = tf.placeholder(tf.float32, shape=[])
 
         def mask(x, x_len):
             # Explict mask the paddings.
@@ -38,10 +33,9 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         # mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
         with tf.variable_scope('embed') as s:
-            with tf.device(self.device):
-                embed = tf.constant(embeddings.get_embeddings(),
-                                    dtype=tf.float32,
-                                    name='embeddings')
+            embed = tf.constant(embeddings.get_embeddings(),
+                                dtype=tf.float32,
+                                name='embeddings')
             x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
             # Linear projection
             project = lambda x: self.linear(x, self.project_dim, bias=False)

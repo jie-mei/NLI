@@ -270,7 +270,7 @@ class SNLI(Dataset):
                             return ' '.join(words), intls, w_tags + i_tags
                         s1, temp1, tags1 = process(fields[3])
                         s2, temp2, tags2 = process(fields[4])
-                        yield (s1, s2, label, [temp1, tags1], [temp1, tags2])
+                        yield (s1, s2, label, [temp1, tags1], [temp2, tags2])
 
     @classmethod
     def _tokenize(cls, sentence: str) -> t.List[str]:

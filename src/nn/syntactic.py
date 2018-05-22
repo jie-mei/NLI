@@ -41,11 +41,11 @@ class Syntactic(AttentiveModel):
                         [1, tf.shape(temp)[1], tf.shape(temp)[2], 1])
             temp = tf.concat([bidx, temp], axis=3)
             # shape: [batch, temp_len, temp_size, 2]
+            temp = tf.cast(temp, tf.float32) # NOTE: register tf.gather in GPU.
 
             # Pad a leading 0 to align with the unfolded tree
             tag = tf.pad(tag, [[0, 0], [1, 0]])
-            tag = tf_Print(tag, [tag], message='tag=')
-            #tag = tf_Print(tag, [temp], message='temp=')
+            tag = tf.cast(tag, tf.float32) # NOTE: register tf.gather in GPU.
             # shape: [batch, 1 + tag_len]
             # NOTE: tag_len <= seq_len + temp_len
 
@@ -53,23 +53,24 @@ class Syntactic(AttentiveModel):
             top = tf.expand_dims(len_ + 1, -1)
             # shape: [batch, 1]
 
-            i = tf.constant(0)
+            i = tf.constant(1)
             def loop_cond(i, tree, temp, tag, batch_size):
                 return tf.less(i, tf.shape(temp)[1])
             def loop_body(i, tree, temp, tag, batch_size):
                 c_idx = tf.gather(temp, i, axis=1)
-                #c_idx = tf_Print(c_idx, [i, c_idx], message='c_idx=', first_n=3)
+                c_idx = tf.cast(c_idx, tf.int32)  # NOTE: restore type
                 # shape: [batch, temp_size, 2]
                 p_idx = tf.concat(
                         [tf.expand_dims(tf.range(batch_size), -1), top + i],
                         axis=1)
                 # shape: [batch, 2]
                 p_tag = tf.gather_nd(tag, p_idx)
+                p_tag = tf.cast(p_tag, tf.int32)  # NOTE: restore type
                 # shape: [batch]
                 c_embed = tf.gather_nd(tree, c_idx)
                 # shape: [batch, temp_size, embed_dim]
                 c_tag = tf.gather_nd(tag, c_idx)
-                c_tag = tf_Print(c_tag, [i, tf.shape(tag), c_tag], message='c_tag=', first_n=3)
+                c_tag = tf.cast(c_tag, tf.int32)  # NOTE: restore type
                 # shape: [batch, temp_size]
                 p_embed = self.merge_fn(c_embed, c_tag, p_tag)
                 tree += tf.scatter_nd(
@@ -120,7 +121,7 @@ class SyntacticForwardAtt(Syntactic):
             self.embed_dim = c_embeds.get_shape()[-1]
         with tf.variable_scope('merge', reuse=tf.AUTO_REUSE):
             tag_weights = tf.get_variable('tag_weight',
-                    shape=(self.tags_num, self.embed_dim),
+                    shape=(self.tags_num + 1, self.embed_dim), # +1 for padding
                     dtype=tf.float32,
                     #initializer=tf.initializers.constant(1))
                     initializer=tf.initializers.truncated_normal(1))
@@ -130,7 +131,150 @@ class SyntacticForwardAtt(Syntactic):
             e_t = self.forward(c_embeds)
             # shape: [batch, temp_size, embed_dim]
             t_t = tf.gather(tag_weights, c_tags)
+            #t_t = tf_Print(t_t, [c_tags, t_t[:,:,:1]], message='t_t=')
+            #t_t = tf_Print(t_t, [c_tags, e_t[:,:,:5]], message='e_t=')
+            #t_t = tf_Print(t_t, [c_tags, c_embeds[:,:,1]], message='c_embeds=')
             # shape: [batch, temp_size, embed_dim]
             att = tf.nn.softmax(e_t * t_t, axis=1)
+            #att = tf_Print(att, [c_tags, att[:,:,1]], message='c_embeds=')
             # shape: [batch, temp_size, embed_dim]
-            return tf.reduce_sum(att * c_embeds, axis=1)
+            return self.attent(att, c_embeds)
+
+    def attent(self,
+            attention: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            embed: tf.Tensor       # 3D: [batch, temp_size, embed_dim]
+            ) -> tf.Tensor:        # 2D: [batch, embed_dim]
+        return tf.reduce_sum(attention * embed, axis=1)
+
+
+class SyntacticForwardAttV2(SyntacticForwardAtt):
+
+    def attent(self,
+            attention: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            embed: tf.Tensor       # 3D: [batch, temp_size, embed_dim]
+            ) -> tf.Tensor:        # 2D: [batch, embed_dim]
+        if not hasattr(self, 'input_dim'):
+            shape = embed.get_shape()
+            self.input_dim = shape[1] * shape[2]
+            self.output_dim = shape[2]
+        v = tf.reshape(attention * embed, [-1, self.input_dim])
+        return self.forward(v, scope='tag_fuse')
+
+
+class SyntacticForwardAttV3(SyntacticForwardAtt):
+
+    def merge_fn(self,
+            c_embeds: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            c_tags: tf.Tensor,    # 2D: [batch, temp_size]
+            p_tags: tf.Tensor     # 1D: [batch]
+            )-> tf.Tensor:        # 2D: [batch, embed_dim]
+        if not hasattr(self, 'embed_dim'):
+            self.temp_size = c_embeds.get_shape()[1]
+            self.embed_dim = c_embeds.get_shape()[2]
+        with tf.variable_scope('merge', reuse=tf.AUTO_REUSE):
+            tag_weights = tf.get_variable('tag_weight',
+                    shape=(self.tags_num + 1, self.embed_dim), # +1 for padding
+                    dtype=tf.float32,
+                    initializer=tf.initializers.constant(1))
+                    #initializer=tf.initializers.truncated_normal(1))
+            # shape: [tags, embed_dim]
+
+            tags = tf.count_nonzero(c_tags, 1)
+            # shape: [batch]
+            mask = tf.sequence_mask(tags, self.temp_size, dtype=tf.float32)
+            # shape: [batch, temp_size]
+            mask = tf.expand_dims(mask, -1)
+            # shape: [batch, temp_size, 1]
+
+            # Forward attention with POS tag
+            #e_t = self.forward(c_embeds)
+            # shape: [batch, temp_size, embed_dim]
+            t_t = tf.gather(tag_weights, c_tags)
+            # shape: [batch, temp_size, embed_dim]
+            att = tf.nn.softmax(c_embeds * t_t * mask, axis=1)
+            # shape: [batch, temp_size, embed_dim]
+            return self.attent(att, c_embeds)
+
+
+class SyntacticForwardAttV4(SyntacticForwardAttV3):
+
+    def attent(self,
+            attention: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            embed: tf.Tensor       # 3D: [batch, temp_size, embed_dim]
+            ) -> tf.Tensor:        # 2D: [batch, embed_dim]
+        if not hasattr(self, 'input_dim'):
+            shape = embed.get_shape()
+            self.input_dim = shape[1] * shape[2]
+            self.output_dim = shape[2]
+        v = tf.reshape(attention * embed, [-1, self.input_dim])
+        return self.forward(v, scope='tag_fuse')
+
+
+class SyntacticForwardAttV5(SyntacticForwardAtt):
+    """
+    Acc: ~33.3
+    """
+    def merge_fn(self,
+            c_embeds: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            c_tags: tf.Tensor,    # 2D: [batch, temp_size]
+            p_tags: tf.Tensor     # 1D: [batch]
+            )-> tf.Tensor:        # 2D: [batch, embed_dim]
+        if not hasattr(self, 'embed_dim'):
+            self.temp_size = c_embeds.get_shape()[1]
+            self.embed_dim = c_embeds.get_shape()[2]
+        with tf.variable_scope('merge', reuse=tf.AUTO_REUSE):
+            tag_weights = tf.get_variable('tag_weight',
+                    shape=(self.tags_num + 1, self.embed_dim), # +1 for padding
+                    dtype=tf.float32,
+                    initializer=tf.initializers.constant(1))
+                    #initializer=tf.initializers.truncated_normal(1))
+            # shape: [tags, embed_dim]
+
+            tags = tf.count_nonzero(c_tags, 1)
+            # shape: [batch]
+            mask = tf.sequence_mask(tags, self.temp_size, dtype=tf.float32)
+            # shape: [batch, temp_size]
+            mask = tf.expand_dims(mask, -1)
+            # shape: [batch, temp_size, 1]
+
+            # shape: [batch, temp_size, embed_dim]
+            t_t = tf.gather(tag_weights, c_tags) * mask
+            # shape: [batch, temp_size, embed_dim]
+            att = tf.nn.softmax(tf.nn.sigmoid(c_embeds * t_t), axis=1)
+            # shape: [batch, temp_size, embed_dim]
+            return self.attent(att, c_embeds)
+
+
+class SyntacticForwardAttV6(SyntacticForwardAtt):
+
+    def merge_fn(self,
+            c_embeds: tf.Tensor,  # 3D: [batch, temp_size, embed_dim]
+            c_tags: tf.Tensor,    # 2D: [batch, temp_size]
+            p_tags: tf.Tensor     # 1D: [batch]
+            )-> tf.Tensor:        # 2D: [batch, embed_dim]
+        if not hasattr(self, 'embed_dim'):
+            self.temp_size = c_embeds.get_shape()[1]
+            self.embed_dim = c_embeds.get_shape()[2]
+        with tf.variable_scope('merge', reuse=tf.AUTO_REUSE):
+            tag_weights = tf.get_variable('tag_weight',
+                    shape=(self.tags_num + 1, self.embed_dim), # +1 for padding
+                    dtype=tf.float32,
+                    initializer=tf.initializers.constant(1))
+                    #initializer=tf.initializers.truncated_normal(1))
+            # shape: [tags, embed_dim]
+
+            tags = tf.count_nonzero(c_tags, 1)
+            # shape: [batch]
+            mask = tf.sequence_mask(tags, self.temp_size, dtype=tf.float32)
+            # shape: [batch, temp_size]
+            mask = tf.expand_dims(mask, -1)
+            # shape: [batch, temp_size, 1]
+
+            # Forward attention with POS tag
+            t_t = tf.gather(tag_weights, c_tags) * mask
+            # shape: [batch, temp_size, embed_dim]
+            att = tf.nn.softmax(c_embeds * t_t, axis=1)
+            # shape: [batch, temp_size, embed_dim]
+            p_t = tf.gather(tag_weights, p_tags)
+            # shape: [batch, embed_dim]
+            return self.attent(att, c_embeds)# * p_t

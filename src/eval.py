@@ -159,7 +159,7 @@ def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
 def _make_config():
     config = tf.ConfigProto()
     config.gpu_options.allow_growth=True
-    config.allow_soft_placement=True
+    #config.allow_soft_placement=True
     #config.log_device_placement=True
     return config
 
@@ -192,7 +192,8 @@ def _profile_and_exit(session, model, optimizer, handle):
     run_metadata = tf.RunMetadata()
     for i in range(5):
         session.run([optimizer],
-                feed_dict={model.handle: handle},
+                feed_dict={model.handle: handle,
+                           model.keep_prob: 1.0},
                 options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
                 run_metadata=run_metadata)
         tl = timeline.Timeline(run_metadata.step_stats)

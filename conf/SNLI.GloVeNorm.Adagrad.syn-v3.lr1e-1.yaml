@@ -1,5 +1,5 @@
 model:
-  model_type: SyntacticForwardAtt
+  model_type: SyntacticForwardAttV3
   class_num: 3
   bias_init: 0.01
 
@@ -9,8 +9,8 @@ data:
   seed: 6523
 
 train:
-  epoch_num: 100
+  epoch_num: 1000
   batch_size: 64
-  learning_rate: 0.05
+  learning_rate: 0.1
   keep_prob: 0.8
   seed: 1234

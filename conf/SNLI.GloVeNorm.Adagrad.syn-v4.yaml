@@ -1,5 +1,5 @@
 model:
-  model_type: SyntacticForwardAtt
+  model_type: SyntacticForwardAttV4
   class_num: 3
   bias_init: 0.01
 

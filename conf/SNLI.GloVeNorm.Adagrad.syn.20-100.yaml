@@ -9,7 +9,9 @@ data:
   seed: 6523
 
 train:
-  epoch_num: 100
+  restore_from: 'SNLI.GloVeNorm.Adagrad.syn'
+  restore_step: 171679  # 20 epoches
+  epoch_num: 80
   batch_size: 64
   learning_rate: 0.05
   keep_prob: 0.8

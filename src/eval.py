@@ -25,6 +25,7 @@ def _make_dataset(
         dataset: data.Dataset,
         batch_size: int,
         bucket_boundaries: t.List[int] = [],
+        cache: bool = False,
         shuffle: bool = True,
         pad: bool = True,
         shuffle_buffer_size: int = 40960,
@@ -61,7 +62,11 @@ def _make_dataset(
                          dataset.x2_feats)),
             output_types=(tf.int32,) * 9,
             output_shapes=output_shapes)
-    dset = dset.cache()
+    if cache:
+        log.debug('Cache dataset during computation.')
+        dset = dset.cache()
+    else:
+        log.debug('Do not cache dataset during computation.')
 
     if shuffle and shuffle_buffer_size > 1:
         if tf.__version__ >= '1.6':
@@ -237,6 +242,7 @@ def train(name: str,
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
           data_pad: bool = True,
+          data_cache: bool = False,
           data_seed: int = None,
           record_every: int = 1000,
           validate_every: int = 10000,
@@ -281,35 +287,37 @@ def train(name: str,
         valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
         test_wtr = tf.summary.FileWriter(os.path.join(model_path, 'test'))
 
+        dataset_opts = {
+                'pad': data_pad,      
+                'batch_size': batch_size,
+                'session': sess,
+                }
         train_iter, train_hd = _make_dataset_iterator(
                 type_name='one_shot_iterator',
                 handle_name='train_handle',
                 dataset=data.load_dataset(
                         data_name, 'train', data_embedding, data_seed),
-                batch_size=batch_size,
                 bucket_boundaries=[20, 50],
-                pad=data_pad,
                 repeat_num=epoch_num,
+                cache=data_cache,
                 seed=seed,
-                session=sess)
+                **dataset_opts)
         valid_iter, valid_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
                 handle_name='valid_handle',
                 dataset=data.load_dataset(
                         data_name, 'validation', data_embedding, data_seed),
-                batch_size=batch_size,
                 shuffle=False,
-                pad=data_pad,
-                session=sess)
+                cache=True,
+                **dataset_opts)
         test_iter, test_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
                 handle_name='test_handle',
                 dataset=data.load_dataset(
                         data_name, 'test', data_embedding, data_seed),
-                batch_size=batch_size,
                 shuffle=False,
-                pad=data_pad,
-                session=sess)
+                cache=True,
+                **dataset_opts)
 
         step = 1
         if restore_from:

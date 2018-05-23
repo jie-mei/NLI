@@ -277,4 +277,4 @@ class SyntacticForwardAttV6(SyntacticForwardAtt):
             # shape: [batch, temp_size, embed_dim]
             p_t = tf.gather(tag_weights, p_tags)
             # shape: [batch, embed_dim]
-            return self.attent(att, c_embeds)# * p_t
+            return self.attent(att, c_embeds) * p_t

@@ -1,5 +1,6 @@
 # project-spectfic files
 data/
+!src/data/
 etc/
 log/
 report/

@@ -140,15 +140,6 @@ def _make_model_summary(model: nn.Model=None):
     return tf.summary.merge_all()
 
 
-def _make_optimizer(type_name: str, **kwargs):
-    kwargs['name'] = "optimizer"
-    log.debug('Model optimzation using %s' % type_name)
-    if type_name == 'AdamOptimizer' and kwargs['learning_rate'] != 0.001:
-        log.warning('Apply learning rate %f with AdamOptimizer' %
-                    kwargs['learning_rate'])
-    return getattr(tf.train, type_name)(**kwargs)
-
-
 def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
     if isinstance(var_regex_list, str):
         var_regex_list = [var_regex_list]
@@ -236,8 +227,6 @@ def train(name: str,
           batch_size: int = 256,
           epoch_num: int = 200,
           keep_prob: float = 0.8,
-          learning_rate: float = 0.05,
-          optimizer_type: str = 'AdagradOptimizer',
           train_regex_list: t.Union[t.List[str], str] = None,
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
@@ -252,6 +241,7 @@ def train(name: str,
           profiling: bool = False,
           seed: int = None,
           debug: bool = False,
+          optimization_params: dict = {},
           **kwargs
           ) -> None:
 
@@ -267,16 +257,35 @@ def train(name: str,
     log.debug('Model parameters:\n\n\t' +
               '\n\t'.join(graph.print_trainable_variables().split('\n')))
 
-    train_summary = _make_model_summary(model)
 
     # Control randomization
     if seed:
         log.info('Set random seed for data shuffling and graph computation: %d' % seed)
         tf.set_random_seed(seed)
 
+    'learning_rate global_step decay_steps decay_rate',
+    # Setup learning rate
+    global_step = tf.Variable(0, trainable=False, name='global_step')
+    lr_manager = nn.optimization.LearningRateManager(
+        learning_rates=optimization_params['learning_rates'],
+        global_step=global_step,
+        decay_steps=optimization_params.get('decay_steps', None),
+        decay_rate=optimization_params.get('decay_rate', None))
+
     # Optimization
-    optim = (_make_optimizer(optimizer_type, learning_rate=learning_rate)
-            .minimize(model.loss, var_list=_search_var_list(train_regex_list)))
+    optimizer_names = optimization_params.get('optimizer_names', None)
+    if not optimizer_names:
+        optimizer_names = [optimization_params.get('optimizer_type', 'AdagradOptimizer')]
+
+    minimize_args = {'loss': model.loss,
+        'var_list': _search_var_list(train_regex_list),
+        'global_step': global_step}
+    optim = nn.optimization.get_optimizer(
+        optimizer_names,
+        lr_manager,
+        minimize_args)
+
+    train_summary = _make_model_summary(model)
 
     with tf.Session(config=_make_config()) as sess:
         if debug:
@@ -336,15 +345,35 @@ def train(name: str,
             _profile_and_exit(sess, model, optim, train_hd)
 
         pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
+        best_loss, steps_no_improve = 1e10, 0
+        selected_optimizer = optimizer_names[0]
+        patiences = optimization_params.get('switch_optimizer_patience_steps', [None])
         try:
             while True:
                 if step % record_every == 0:
+                    # decide whether to switch optimizer
+                    check_patiences = [i+1 for i, p in enumerate(patiences) if steps_no_improve > p]
+                    if check_patiences:
+                        new_optimizer_index = check_patiences[0]
+                        new_optimizer_name = optimizer_names[new_optimizer_index]
+                        if selected_optimizer != new_optimizer_name:
+                            log.warn('switching optimizer to: {}'.format(new_optimizer_name))
+                            selected_optimizer = new_optimizer_name
+
                     summary, _, loss = sess.run(
                             [train_summary, optim, model.loss],
                             feed_dict={model.handle: train_hd,
-                                       model.keep_prob: keep_prob})
+                                       model.keep_prob: keep_prob,
+                                       'optimizer_name:0': selected_optimizer})
                     pbar.set_postfix(loss='{:.3f}'.format(loss))
                     train_wtr.add_summary(summary, step)
+
+                    # NOTE: we may need to apply this on validation data
+                    if loss < best_loss:
+                        steps_no_improve = 0
+                        best_loss = loss
+                    else:
+                        steps_no_improve += record_every
                 else:
                     sess.run([optim], feed_dict={model.handle: train_hd,
                                                  model.keep_prob: keep_prob})
@@ -382,6 +411,7 @@ def test(name: str,
          data_embedding: str = 'GloVe',
          data_pad: bool = True,
          batch_size: int = 10,
+         optimization_params: dict = {},
          **kwargs,
          ) -> None:
     model_path = build.get_model_path(name)

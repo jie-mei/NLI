@@ -1,0 +1,22 @@
+model:
+  model_type: Decomposable
+  class_num: 3
+  bias_init: 0.01
+
+data:
+  name: SNLI
+  embedding: GloVeNorm
+  seed: 6523
+
+train:
+  epoch_num: 1000
+  batch_size: 64
+  keep_prob: 0.8
+  seed: 1234
+
+optimization:
+  learning_rates: [0.05, 0.0003]
+  decay_steps: 10000
+  decay_rate: 0.997
+  optimizer_names: [AdagradOptimizer, GradientDescentOptimizer]
+  switch_optimizer_patience_steps: [40000]

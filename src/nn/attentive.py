@@ -47,7 +47,7 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
             x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
             # Linear projection
             project = lambda x: self.linear(x, self.project_dim, bias=False)
-            x1, x2 = map(project, [x1, x2])
+            #x1, x2 = map(project, [x1, x2])
             # Post-projection processing
             x1, x2 = self.post_project(x1, x2)
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
@@ -99,9 +99,10 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
 
     def forward(self, 
             inputs: tf.Tensor,
+            dim: int = None,
             scope: t.Union[str, tf.VariableScope] = None):
         scope = scope if scope else 'forward'
-        kwargs = {'dim': self.project_dim,
+        kwargs = {'dim': dim if dim else self.project_dim,
                   'keep_prob': self.keep_prob,
                   'weight_init': tf.truncated_normal_initializer(stddev=0.01)}
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
@@ -111,7 +112,10 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
 
 
     def post_project(self, x1, x2):
+        x1, x2 = map(lambda x: op.highway(x, scope='highway-1'), [x1, x2])
+        x1, x2 = map(lambda x: op.highway(x, scope='highway-2'), [x1, x2])
         return x1, x2
+        #return x1, x2
 
 
     def attention(self,
@@ -125,9 +129,45 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
+            #att1 = self.attention_mul(x1, x2)
+            att1 = self.attention_dist(x1, x2)
+            return att1
+            #att2 = self.attention_dist(x1, x2)
+            #return att1 + att2
+
+
+    def attention_mul(self,
+            x1: tf.Tensor,
+            x2: tf.Tensor,
+            scope: t.Union[str, tf.VariableScope] = None,
+            ):
+        """
+        Inputs:  [batch, seq_len_1, embed_dim]
+                 [batch, seq_len_2, embed_dim]
+        Returns: [batch, seq_len_1, seq_len_2]
+        """
+        with tf.variable_scope('mul-att'):
             x1 = self.forward(x1)
             x2 = self.forward(x2)
             return tf.matmul(x1, tf.matrix_transpose(x2))
+
+
+    def attention_dist(self,
+            x1: tf.Tensor,
+            x2: tf.Tensor,
+            scope: t.Union[str, tf.VariableScope] = None,
+            ):
+        """
+        Inputs:  [batch, seq_len_1, embed_dim]
+                 [batch, seq_len_2, embed_dim]
+        Returns: [batch, seq_len_1, seq_len_2]
+        """
+        with tf.variable_scope('dist-att') as s:
+            x1 = self.forward(x1)
+            x2 = self.forward(x2)
+            x1 = tf.expand_dims(x1, 2)
+            x2 = tf.expand_dims(x2, 1)
+            return tf.reduce_sum(1 / (1 + tf.abs(x1 - x2)), axis=-1)
 
 
     def intra(self, x1, x2):

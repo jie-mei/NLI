@@ -1,0 +1,20 @@
+model:
+  model_type: AttentiveModel
+  class_num: 3
+  bias_init: 0.01
+
+data:
+  name: SNLI
+  embedding: GloVeNorm
+  seed: 6523
+
+train:
+  optimizer_type: AdamOptimizer
+  restore_from: SNLI.GloVeNorm.Adam.att.dist
+  restore_step: 858388
+  learning_rate: 0.0001
+  data_cache: True
+  epoch_num: 100
+  batch_size: 64
+  keep_prob: 0.8
+  seed: 1234

@@ -44,9 +44,9 @@ def parse_yaml(path, mode=None):
         return flat
     with open(path, 'r') as conf_file:
         raw = yaml.load(conf_file)
+        print('raw', raw)
         conf = {**flatten(None, raw['model']),
-                **flatten('data', raw['data']),
-               'optimization_params': raw['optimization']}
+                **flatten('data', raw['data'])}
         if mode and mode in raw:
                 conf = {**conf, **flatten(None, raw[mode])}
         return conf

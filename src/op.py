@@ -42,10 +42,28 @@ def linear(
                     dtype=tf.float32,
                     initializer=init)
             t += b
+        t = activation_fn(t) if activation_fn else t
         if output_rank == 3:
             t = tf.reshape(t, [-1, t_shape[1], dim])
-        t = activation_fn(t) if activation_fn else t
     return t
+
+
+def highway(
+        inputs: tf.Tensor,
+        scope: t.Union[str, tf.VariableScope] = None,
+        reuse: bool = tf.AUTO_REUSE,
+        **kwargs
+        ):
+    """
+    Inputs:  3D-Tensor [batch, seq_len, input_dim], or
+             2D-Tensor [batch, input_dim]
+    Returns: 3D-Tensor [batch, seq_len, dim], or
+             2D-Tensor [batch, dim]
+    """
+    with tf.variable_scope(scope if scope else 'highway', reuse=reuse):
+        trans = linear(inputs, scope='trans', **kwargs)
+        gate = linear(inputs, scope='gate', activation_fn=tf.sigmoid, **kwargs)
+        return gate * trans + (1 - gate) * inputs
 
 
 def lstm(

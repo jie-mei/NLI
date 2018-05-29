@@ -21,6 +21,15 @@ from util import build, parse, graph
 from util.log import exec_log as log
 
 
+def _select_kwargs_regex(kwargs, regex, invert=False, start=0):
+    ans = {}
+    for k, v in kwargs.items():
+        matches = re.match(regex, k)
+        if (invert and not matches) or (not invert and matches):
+            ans[k[start:]] = v
+    return ans
+
+
 def _make_dataset(
         dataset: data.Dataset,
         batch_size: int,
@@ -152,6 +161,33 @@ def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
         return var_list
 
 
+def _make_optim_manager(optim_manager_type, loss_op, train_regex_list, kwargs):
+    om = getattr(nn.optim, optim_manager_type)(
+            loss_op=loss_op,
+            var_list=_search_var_list(train_regex_list),
+            **_select_kwargs_regex(kwargs,
+                    regex=r'^optim_manager(?!_type)',
+                    start=14))
+    log.info(str(om))
+    idx = 1
+    if _select_kwargs_regex(kwargs, regex=r'^optim_(?!manager)'):
+        # Construct optimizer with 'optim_*' arguments
+        optim_kwargs = _select_kwargs_regex(kwargs,
+                regex=r'^optim_(?!manager)',
+                start=6)
+    else:
+        while True:
+            # Construct optimizer with 'optim{idx}_*' arguments
+            optim_kwargs = _select_kwargs_regex(kwargs,
+                    regex=r'^optim%d_' % idx,
+                    start=6 + len(str(idx)))
+            if not optim_kwargs:
+                break
+            om.add_optimizer(**optim_kwargs)
+            idx += 1
+    return om
+
+
 def _make_config():
     config = tf.ConfigProto()
     config.gpu_options.allow_growth=True
@@ -179,6 +215,7 @@ def _iterate_dataset(session, model, iterator, handle, summary_writer, step):
     summary = tf.Summary(value=[
             tf.Summary.Value(tag='Accuracy', simple_value=acc)])
     summary_writer.add_summary(summary, step)
+    return acc
 
 
 def _profile_and_exit(session, model, optimizer, handle):
@@ -228,6 +265,7 @@ def train(name: str,
           epoch_num: int = 200,
           keep_prob: float = 0.8,
           train_regex_list: t.Union[t.List[str], str] = None,
+          optim_manager_type: str = 'NotChange',
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
           data_pad: bool = True,
@@ -241,7 +279,6 @@ def train(name: str,
           profiling: bool = False,
           seed: int = None,
           debug: bool = False,
-          optimization_params: dict = {},
           **kwargs
           ) -> None:
 
@@ -252,38 +289,16 @@ def train(name: str,
     # Network setup
     model = getattr(nn, model_type)(
             embeddings=data.load_embeddings(data_name, data_embedding, data_seed),
-            **kwargs)
+            **_select_kwargs_regex(kwargs, r'^optim[0-9]*_', invert=True))
     log.info(str(model))
     log.debug('Model parameters:\n\n\t' +
               '\n\t'.join(graph.print_trainable_variables().split('\n')))
 
-
     # Control randomization
     if seed:
-        log.info('Set random seed for data shuffling and graph computation: %d' % seed)
+        log.info('Set random seed for data shuffling and graph computation: %d'
+                % seed)
         tf.set_random_seed(seed)
-
-    'learning_rate global_step decay_steps decay_rate',
-    # Setup learning rate
-    global_step = tf.Variable(0, trainable=False, name='global_step')
-    lr_manager = nn.optimization.LearningRateManager(
-        learning_rates=optimization_params['learning_rates'],
-        global_step=global_step,
-        decay_steps=optimization_params.get('decay_steps', None),
-        decay_rate=optimization_params.get('decay_rate', None))
-
-    # Optimization
-    optimizer_names = optimization_params.get('optimizer_names', None)
-    if not optimizer_names:
-        optimizer_names = [optimization_params.get('optimizer_type', 'AdagradOptimizer')]
-
-    minimize_args = {'loss': model.loss,
-        'var_list': _search_var_list(train_regex_list),
-        'global_step': global_step}
-    optim = nn.optimization.get_optimizer(
-        optimizer_names,
-        lr_manager,
-        minimize_args)
 
     train_summary = _make_model_summary(model)
 
@@ -291,10 +306,6 @@ def train(name: str,
         if debug:
             from tensorflow.python import debug as tf_debug
             sess = tf_debug.LocalCLIDebugWrapperSession(sess)
-
-        train_wtr = tf.summary.FileWriter(os.path.join(model_path, 'train'), sess.graph)
-        valid_wtr = tf.summary.FileWriter(os.path.join(model_path, 'valid'))
-        test_wtr = tf.summary.FileWriter(os.path.join(model_path, 'test'))
 
         dataset_opts = {
                 'pad': data_pad,      
@@ -328,13 +339,26 @@ def train(name: str,
                 cache=True,
                 **dataset_opts)
 
+        om = _make_optim_manager(optim_manager_type, model.loss,
+                train_regex_list, kwargs)
+
+        test_wtr = tf.summary.FileWriter(os.path.join(model_path, 'test'))
+        train_wtr = tf.summary.FileWriter(os.path.join(model_path, 'train'),
+                sess.graph)
+        # Build a validation summary writer for each optimizer
+        valid_wtr = {}
+        for optim in om.optims:
+            valid_wtr[optim.get_name()] = tf.summary.FileWriter(
+                    os.path.join(model_path, 'valid-%s' % optim.get_name()))
+
         step = 1
         if restore_from:
             _copy_checkpoint(restore_from, model_path, restore_step)
             _restore_model(sess, model_path, restore_step)
-            # evaluate the pretrained model
+            # Evaluate the pretrained model
             step = restore_step
-            _iterate_dataset(sess, model, valid_iter, valid_hd, valid_wtr, step)
+            _iterate_dataset(sess, model, valid_iter, valid_hd,
+                    valid_wtr[om.optim.get_name()], step)
             _iterate_dataset(sess, model, test_iter, test_hd, test_wtr, step)
             step += 1
         else:
@@ -342,47 +366,33 @@ def train(name: str,
             step = 1
 
         if profiling:
-            _profile_and_exit(sess, model, optim, train_hd)
+            _profile_and_exit(sess, model, om.optim_op, train_hd)
 
         pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
-        best_loss, steps_no_improve = 1e10, 0
-        selected_optimizer = optimizer_names[0]
-        patiences = optimization_params.get('switch_optimizer_patience_steps', [None])
         try:
             while True:
                 if step % record_every == 0:
-                    # decide whether to switch optimizer
-                    check_patiences = [i+1 for i, p in enumerate(patiences) if steps_no_improve > p]
-                    if check_patiences:
-                        new_optimizer_index = check_patiences[0]
-                        new_optimizer_name = optimizer_names[new_optimizer_index]
-                        if selected_optimizer != new_optimizer_name:
-                            log.warn('switching optimizer to: {}'.format(new_optimizer_name))
-                            selected_optimizer = new_optimizer_name
-
                     summary, _, loss = sess.run(
-                            [train_summary, optim, model.loss],
+                            [train_summary, om.optim_op, model.loss],
                             feed_dict={model.handle: train_hd,
-                                       model.keep_prob: keep_prob,
-                                       'optimizer_name:0': selected_optimizer})
+                                       model.keep_prob: keep_prob})
                     pbar.set_postfix(loss='{:.3f}'.format(loss))
                     train_wtr.add_summary(summary, step)
-
-                    # NOTE: we may need to apply this on validation data
-                    if loss < best_loss:
-                        steps_no_improve = 0
-                        best_loss = loss
-                    else:
-                        steps_no_improve += record_every
                 else:
-                    sess.run([optim], feed_dict={model.handle: train_hd,
-                                                 model.keep_prob: keep_prob})
+                    sess.run([om.optim_op],
+                             feed_dict={model.handle: train_hd,
+                                        model.keep_prob: keep_prob})
 
                 if step % validate_every == 0:
                     pbar.set_description('Valid')
-                    _iterate_dataset(sess, model, valid_iter, valid_hd, valid_wtr, step)
+                    valid_acc = _iterate_dataset(
+                            sess, model, valid_iter, valid_hd,
+                            valid_wtr[om.optim.get_name()], step)
+                    # Update upon the validation perfomance
+                    om.update(valid_acc, step)
                     pbar.set_description('Test')
-                    _iterate_dataset(sess, model, test_iter, test_hd, test_wtr, step)
+                    _iterate_dataset(
+                            sess, model, test_iter, test_hd, test_wtr, step)
                     pbar.set_description('Train')
 
                 if step % save_every == 0:
@@ -411,7 +421,6 @@ def test(name: str,
          data_embedding: str = 'GloVe',
          data_pad: bool = True,
          batch_size: int = 10,
-         optimization_params: dict = {},
          **kwargs,
          ) -> None:
     model_path = build.get_model_path(name)
@@ -471,6 +480,6 @@ if __name__ == "__main__":
         del kwargs['file']
 
     log.debug('Input arguments:\n\n\t%s\n' %
-              '\n\t'.join('%-20s %s' % (k + ':', v) for k, v in kwargs.items()))
+              '\n\t'.join('%-25s %s' % (k + ':', v) for k, v in kwargs.items()))
 
     locals()[mode](**kwargs) # type: ignore

@@ -1,0 +1,31 @@
+model:
+  model_type: AttentiveModel
+  class_num: 3
+  bias_init: 0.01
+
+data:
+  name: SNLI
+  embedding: GloVeNorm
+  seed: 6523
+
+train:
+  data_cache: True
+  epoch_num: 100
+  batch_size: 64
+  keep_prob: 0.8
+  seed: 1234
+  validate_every: 5000
+  optim_manager:
+    type: ProgressCheck
+    avg_steps: 100000
+    min_delta: 0.001
+    patience: 7
+  optim1:
+    optim_type: AdamOptimizer
+    learning_rate: 0.00005
+  optim2:
+    optim_type: GradientDescentOptimizer
+    learning_rate: 0.0003
+    global_step: 0
+    decay_steps: 10000
+    decay_rate: 0.977

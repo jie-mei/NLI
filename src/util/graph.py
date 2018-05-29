@@ -5,7 +5,7 @@ import tensorflow as tf
 
 def print_trainable_variables():
     output = ''
-    fmt = '%-40s  %-20s  %10d'
+    fmt = '%-50s  %-20s  %10d'
     total = 0
     for v in tf.trainable_variables():
         try:

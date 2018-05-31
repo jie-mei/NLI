@@ -46,10 +46,13 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
                                 name='embeddings')
             x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
             # Linear projection
-            project = lambda x: self.linear(x, self.project_dim, bias=False)
+            #project = lambda x: self.linear(x, self.project_dim, bias=False)
             #x1, x2 = map(project, [x1, x2])
             # Post-projection processing
-            x1, x2 = self.post_project(x1, x2)
+            #x1, x2 = self.post_project(x1, x2)
+            x1, x2 = map(lambda x: op.highway(x, scope='highway-1'), [x1, x2])
+            x1, x2 = map(lambda x: op.highway(x, scope='highway-2'), [x1, x2])
+
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
         with tf.variable_scope('attent') as s:
@@ -62,11 +65,8 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
             v1 = self.forward(tf.concat([x1, beta,  x1 - beta,  x1 * beta],  2))
             v2 = self.forward(tf.concat([x2, alpha, x2 - alpha, x2 * alpha], 2))
 
-            if self.use_lstm:
-                v1 = op.lstm(v1, self.len1, 200, dynamic=True,
-                        bidirectional=True, scope='gru1')
-                v2 = op.lstm(v1, self.len2, 200, dynamic=True,
-                        bidirectional=True, scope='gru2')
+            v1, v2 = map(lambda x: op.highway(x, scope='highway-1'), [v1, v2])
+            v1, v2 = map(lambda x: op.highway(x, scope='highway-2'), [v1, v2])
 
         with tf.variable_scope('aggregate') as s:
             # CHANGE
@@ -129,11 +129,11 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
         Returns: [batch, seq_len_1, seq_len_2]
         """
         with tf.name_scope('attention') as s:
-            #att1 = self.attention_mul(x1, x2)
-            att1 = self.attention_dist(x1, x2)
-            return att1
-            #att2 = self.attention_dist(x1, x2)
-            #return att1 + att2
+            att1 = self.attention_mul(x1, x2)
+            #att1 = self.attention_dist(x1, x2)
+            #return att1
+            att2 = self.attention_dist(x1, x2)
+            return att1 + att2
 
 
     def attention_mul(self,

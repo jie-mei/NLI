@@ -10,6 +10,9 @@ from util.display import ReprMixin
 from util.log import exec_log as log
 
 
+WORD_SEQ_LEN = 16
+
+
 class Model(ReprMixin, ABC):
     """ A base NN model to conduct pairwised text analysis. """
 
@@ -18,26 +21,30 @@ class Model(ReprMixin, ABC):
             self.handle = tf.placeholder(tf.string, shape=[], name='handle')
             self.data_iterator = tf.data.Iterator.from_string_handle(
                     string_handle=self.handle,
-                    output_types=(tf.int32,) * 9,
+                    output_types=(tf.int32,) * 11,
                     output_shapes=(tf.TensorShape([None, None]),
                                    tf.TensorShape([None, None]),
                                    tf.TensorShape([None]),
                                    tf.TensorShape([None]),
                                    tf.TensorShape([None]),
+                                   tf.TensorShape([None, None, WORD_SEQ_LEN]),
+                                   tf.TensorShape([None, None, WORD_SEQ_LEN]),
                                    tf.TensorShape([None, None, 4]),
                                    tf.TensorShape([None, None, 4]),
                                    tf.TensorShape([None, None]),
                                    tf.TensorShape([None, None])))
             iter_next = self.data_iterator.get_next()
-        self.x1    = tf.identity(iter_next[0], name='id1')
-        self.x2    = tf.identity(iter_next[1], name='id2')
-        self.y     = tf.identity(iter_next[2], name='y')
-        self.len1  = tf.identity(iter_next[3], name='len1')
-        self.len2  = tf.identity(iter_next[4], name='len2')
-        self.temp1 = tf.identity(iter_next[5], name='temp1')
-        self.temp2 = tf.identity(iter_next[6], name='temp2')
-        self.tag1  = tf.identity(iter_next[7], name='tag1')
-        self.tag2  = tf.identity(iter_next[8], name='tag2')
+        self.x1    = tf.identity(iter_next[0],  name='id1')
+        self.x2    = tf.identity(iter_next[1],  name='id2')
+        self.y     = tf.identity(iter_next[2],  name='y')
+        self.len1  = tf.identity(iter_next[3],  name='len1')
+        self.len2  = tf.identity(iter_next[4],  name='len2')
+        self.char1 = tf.identity(iter_next[5],  name='char1')
+        self.char2 = tf.identity(iter_next[6],  name='char2')
+        self.temp1 = tf.identity(iter_next[7],  name='temp1')
+        self.temp2 = tf.identity(iter_next[8],  name='temp2')
+        self.tag1  = tf.identity(iter_next[9],  name='tag1')
+        self.tag2  = tf.identity(iter_next[10], name='tag2')
 
     def count_parameters(self):
         total = 0

@@ -14,6 +14,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
     def __init__(self,
             embeddings: embed.IndexedWordEmbedding,
             class_num: int,
+            keep_prob: float = 0.8,
             project_dim: int = 200,
             intra_attention: bool = False,
             bias_init: float = 0,
@@ -22,31 +23,22 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self.bias_init = bias_init
+        self.keep_prob = keep_prob
         self._class_num = class_num
 
         self.keep_prob = tf.placeholder(tf.float32, shape=[])
-
-        def mask(x, x_len):
-            # Explict mask the paddings.
-            mask = tf.sequence_mask(x_len, tf.shape(x)[1], dtype=tf.float32)
-            return tf.expand_dims(mask, -1)
-        # mask1, mask2 = mask(self.x1, self.len1), mask(self.x2, self.len2)
 
         with tf.variable_scope('embed') as s:
             embed = tf.constant(embeddings.get_embeddings(),
                                 dtype=tf.float32,
                                 name='embeddings')
             x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
-            # Linear projection
             project = lambda x: self.linear(x, self.project_dim, bias=False)
             x1, x2 = map(project, [x1, x2])
-            # Post-projection processing
-            x1, x2 = self.post_project(x1, x2)
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
-            # sim *= mask1 * tf.matrix_transpose(mask2)
             alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
             beta  = tf.matmul(tf.nn.softmax(sim), x2)
         
@@ -55,15 +47,9 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             v2 = self.forward(tf.concat([x2, alpha], 2))
 
         with tf.variable_scope('aggregate') as s:
-            # CHANGE
             v1 = tf.reduce_sum(v1, axis=1)
             v2 = tf.reduce_sum(v2, axis=1)
             y_hat = self.forward(tf.concat([v1, v2], 1))
-            #def reduce_mean(x, x_len):
-            #    return (tf.reduce_sum(x, axis=1) /
-            #            tf.expand_dims(tf.cast(x_len, tf.float32), -1))
-            #v1 = reduce_mean(v1 * mask1, self.len1)
-            #v2 = reduce_mean(v2 * mask2, self.len2)
             y_hat = self.linear(y_hat, dim=self._class_num)
 
         self.evaluate_and_loss(y_hat)
@@ -81,9 +67,16 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             scope: t.Union[str, tf.VariableScope] = None,
             ):
         scope = scope if scope else 'forward'
+        op_kwargs = {
+                'keep_prob': self.keep_prob,
+                'activation_fn': tf.nn.relu
+                }
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
-            t = op.linear(inputs, self.project_dim, scope='linear-1')
-            t = op.linear(t, scope='linear-2')
+            t = op.linear(inputs,
+                    dim=self.project_dim,
+                    scope='linear-1',
+                    **op_kwargs)
+            t = op.linear(t, scope='linear-2', **op_kwargs)
             return t
 
 

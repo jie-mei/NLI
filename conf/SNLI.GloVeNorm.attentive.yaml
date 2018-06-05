@@ -9,9 +9,11 @@ data:
   seed: 6523
 
 train:
-  data_cache: True
+  data:
+    cache: True
+    argument: False
   epoch_num: 100
-  batch_size: 64
+  batch_size: 32
   keep_prob: 0.8
   seed: 1234
   validate_every: 5000
@@ -22,7 +24,7 @@ train:
     patience: 7
   optim1:
     optim_type: AdamOptimizer
-    learning_rate: 0.00005
+    learning_rate: 0.0002
   optim2:
     optim_type: GradientDescentOptimizer
     learning_rate: 0.0003

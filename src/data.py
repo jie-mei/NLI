@@ -230,6 +230,8 @@ class SNLI(Dataset):
 
     TEMP_DROP_VAL = 4
 
+    TAGS = 72
+
     def __init__(self, *args, **kwargs)-> None:
         super(SNLI, self).__init__(*args, **kwargs)
         self.tags = {}  # type: t.Dict[str, int]

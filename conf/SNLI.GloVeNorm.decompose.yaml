@@ -1,0 +1,22 @@
+model:
+  model_type: Decomposable
+  class_num: 3
+
+data:
+  name: SNLI
+  embedding: GloVeNorm
+  seed: 6523
+
+train:
+  data:
+    cache: True
+    argument: False
+  epoch_num: 100
+  batch_size: 32
+  keep_prob: 0.8
+  seed: 1234
+  optim_manager:
+    type: NotChange
+  optim:
+    optim_type: AdagradOptimizer
+    learning_rate: 0.05

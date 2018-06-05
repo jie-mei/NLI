@@ -33,6 +33,7 @@ def _select_kwargs_regex(kwargs, regex, invert=False, start=0):
 def _make_dataset(
         dataset: data.Dataset,
         batch_size: int,
+        argument: bool = False,
         bucket_boundaries: t.List[int] = [],
         cache: bool = False,
         shuffle: bool = True,
@@ -56,26 +57,40 @@ def _make_dataset(
         repeat_time: The number of times the records in the dataset are
             repeated.
     """
-    output_shapes = ([None], [None], [], [], [],
-                     [None, 4], [None, 4],
-                     [None], [None]) # type: tuple
-    dset = tf.data.Dataset.from_generator(
-            lambda: ((x1, x2, y, len(x1), len(x2),
-                            feat1[0], feat2[0],  # templates
-                            feat1[1], feat2[1])  # tags
-                     for x1, x2, y, feat1, feat2 in
-                     zip(dataset.x1_ids,
-                         dataset.x2_ids,
-                         dataset.labels,
-                         dataset.x1_feats,
-                         dataset.x2_feats)),
-            output_types=(tf.int32,) * 9,
+    output_shapes = ([None], [None], [],             # x1, x2, y
+                     [], [],                         # len1, len2 
+                     [None, nn.WORD_SEQ_LEN],        # char1
+                     [None, nn.WORD_SEQ_LEN],        # char2
+                     [None, 4], [None, 4],           # temp1, temp2
+                     [None], [None])  # type: tuple  # tag1, tag2
+    if argument:
+        log.debug('Apply data argumentation')
+    def gen():
+        def to_ord_list(word):
+            """ Convert the first 16 characters of the given word to their
+            ordinal value. If the given word contains less than 16 words, pad
+            the list to length 16 with 0. """
+            out = list(map(ord, list(word)))
+            while len(out) < nn.WORD_SEQ_LEN:
+                out += 0,
+            return out[:nn.WORD_SEQ_LEN]
+        for x1, x2, y, w1, w2, (temp1, tag1), (temp2, tag2) in zip(
+                dataset.x1_ids, dataset.x2_ids, dataset.labels,
+                dataset.x1_words, dataset.x2_words,
+                dataset.x1_feats, dataset.x2_feats):
+            yield (x1, x2, y, len(x1), len(x2), list(map(to_ord_list, w1)),
+                    list(map(to_ord_list, w2)), temp1, temp2, tag1, tag2)
+            if argument:
+                yield (x2, x1, y, len(x2), len(x1), list(map(to_ord_list, w2)),
+                        list(map(to_ord_list, w1)), temp2, temp1, tag2, tag1)
+    dset = tf.data.Dataset.from_generator(gen,
+            output_types=(tf.int32,) * 11,
             output_shapes=output_shapes)
     if cache:
-        log.debug('Cache dataset during computation.')
+        log.debug('Cache dataset during computation')
         dset = dset.cache()
     else:
-        log.debug('Do not cache dataset during computation.')
+        log.debug('Do not cache dataset during computation')
 
     if shuffle and shuffle_buffer_size > 1:
         if tf.__version__ >= '1.6':
@@ -92,30 +107,13 @@ def _make_dataset(
     # Pack records with similar lengthes as batch.
     if pad:
         if bucket_boundaries:
-            if tf.__version__ >= '1.8':
-                log.debug('Generate batches using '
-                          'tf.contrib.data.bucket_by_sequence_length')
-                dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
-                        (lambda x1, x2, y, len1, len2, temp1, temp2, tag1, tag2:
-                                tf.maximum(len1, len2)),
-                        bucket_boundaries,
-                        [batch_size] * (len(bucket_boundaries) + 1)))
-            else:
-                log.debug('Generate batches using '
-                          'tf.contrib.data.group_by_window')
-                def bucketing(x1, x2, y, len1, len2):
-                    size = tf.maximum(len1, len2)
-                    bucket = tf.case(
-                            [(size < b, lambda: i + 1)
-                                    for i, b in enumerate(bucket_boundaries)],
-                            default=lambda: 0,
-                            exclusive=True)
-                    return tf.to_int64(bucket)
-                dset = dset.apply(tf.contrib.data.group_by_window(
-                        key_func=bucketing,
-                        reduce_func=lambda _, data: data.padded_batch(batch_size,
-                                padded_shapes=output_shapes),
-                        window_size=batch_size))
+            log.debug('Generate batches using '
+                      'tf.contrib.data.bucket_by_sequence_length')
+            dset = dset.apply(tf.contrib.data.bucket_by_sequence_length(
+                    (lambda x1, x2, y, l1, l2, c1, c2, tmp1, tmp2, tag1, tag2:
+                            tf.maximum(l1, l2)),
+                    bucket_boundaries,
+                    [batch_size] * (len(bucket_boundaries) + 1)))
         else:
             log.debug('Generate padded batches without bucketing')
             dset = dset.padded_batch(batch_size, padded_shapes=output_shapes)
@@ -133,10 +131,11 @@ def _make_dataset_iterator(
         type_name: str,
         handle_name: str,
         **args):
-    dataset = _make_dataset(**args)
-    iterator = getattr(dataset, 'make_' + type_name)()
-    handle = session.run(iterator.string_handle(handle_name))
-    return iterator, handle
+    with tf.name_scope(handle_name):
+        dataset = _make_dataset(**args)
+        iterator = getattr(dataset, 'make_' + type_name)()
+        handle = session.run(iterator.string_handle(handle_name))
+        return iterator, handle
 
 
 def _make_model_summary(model: nn.Model=None):
@@ -175,6 +174,7 @@ def _make_optim_manager(optim_manager_type, loss_op, train_regex_list, kwargs):
         optim_kwargs = _select_kwargs_regex(kwargs,
                 regex=r'^optim_(?!manager)',
                 start=6)
+        om.add_optimizer(**optim_kwargs)
     else:
         while True:
             # Construct optimizer with 'optim{idx}_*' arguments
@@ -268,6 +268,7 @@ def train(name: str,
           optim_manager_type: str = 'NotChange',
           data_name: str = 'SNLI',
           data_embedding: str = 'GloVe',
+          data_argument: bool = False,
           data_pad: bool = True,
           data_cache: bool = False,
           data_seed: int = None,
@@ -317,6 +318,7 @@ def train(name: str,
                 handle_name='train_handle',
                 dataset=data.load_dataset(
                         data_name, 'train', data_embedding, data_seed),
+                argument=data_argument,
                 bucket_boundaries=[20, 50],
                 repeat_num=epoch_num,
                 cache=data_cache,

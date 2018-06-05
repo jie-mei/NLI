@@ -1,6 +1,5 @@
 model:
-  model_type: ResModel
-  project_dim: 200
+  model_type: DIIN
   class_num: 3
 
 data:
@@ -9,14 +8,14 @@ data:
   seed: 6523
 
 train:
-  data_cache: True
+  data:
+    cache: True
+    argument: False
   epoch_num: 100
   batch_size: 32
   keep_prob: 0.8
   seed: 1234
-  record_every: 200
-  validate_every: 2000
-  save_every: 20000
+  validate_every: 5000
   optim_manager:
     type: ProgressCheck
     avg_steps: 100000
@@ -24,7 +23,7 @@ train:
     patience: 7
   optim1:
     optim_type: AdamOptimizer
-    learning_rate: 0.00001
+    learning_rate: 0.001
   optim2:
     optim_type: GradientDescentOptimizer
     learning_rate: 0.0003

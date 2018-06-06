@@ -4,5 +4,5 @@ from nn.syntactic import *
 from nn.attentive import *
 from nn.optim import *
 from nn.deep import *
-from nn.diin import *
+from nn.cafe import *
 from nn.base import *

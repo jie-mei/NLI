@@ -19,15 +19,9 @@ class AttentiveModel(SoftmaxCrossEntropyMixin, Model):
             embeddings: embed.IndexedWordEmbedding,
             class_num: int,
             project_dim: int = 500,
-            intra_attention: bool = False,
-            bias_init: float = 0,
-            use_lstm: bool = False,
             ) -> None:
         super(AttentiveModel, self).__init__()
         self.project_dim = project_dim
-        self.intra_attention = intra_attention
-        self.bias_init = bias_init
-        self.use_lstm = use_lstm
         self._class_num = class_num
 
         self.keep_prob = tf.placeholder(tf.float32, shape=[])

@@ -5,4 +5,6 @@ from nn.attentive import *
 from nn.optim import *
 from nn.deep import *
 from nn.cafe import *
+from nn.diin import *
 from nn.base import *
+from nn.test import *

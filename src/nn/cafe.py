@@ -23,7 +23,8 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
             scale_l1: float = 0.0,
             scale_l2: float = 0.000001,
             encode_dim: int = 300,
-            fact_dim: int = 10,
+            fact_intr_dim: int = 10,
+            fact_proj_dim: int = -1,
             char_filer_width: int = 5,
             char_embed_dim: int = 8,
             char_conv_dim: int = 100,
@@ -34,7 +35,8 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
         self.scale_l1 = scale_l1
         self.scale_l2 = scale_l2
         self.encode_dim = encode_dim
-        self.fact_dim = fact_dim
+        self.fact_proj_dim = fact_proj_dim
+        self.fact_intr_dim = fact_intr_dim
         self.char_filter_width = char_filer_width
         self.char_embed_dim = char_embed_dim
         self.char_conv_dim = char_conv_dim
@@ -119,6 +121,8 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
                 # shape: [batch, seq_len, 3]
 
             # TODO: variables may not be shared between different facts
+            #x1 = tf.concat([x1, inter1, intra1], 2)
+            #x2 = tf.concat([x2, inter2, intra2], 2)
             x1 = tf.concat([x1,
                             align_fact(x1, inter1, 'inter'),
                             align_fact(x1, intra1, 'intra')], 2)
@@ -133,6 +137,7 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
                         cell=tf.nn.rnn_cell.LSTMCell(self.lstm_unit),
                         inputs=x,
                         dtype=tf.float32)
+                outputs = tf.nn.dropout(outputs, self.keep_prob)
                 return outputs
             x1, x2 = map(lstm_encode, [x1, x2])
 
@@ -161,17 +166,20 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
         Output:
             2D-Tensor: [batch, seq_len]
         """
-        return self.fact_impl2(scope, x)
+        return self.fact_impl1(scope, x)
 
     # Factoriztion
     def fact_impl1(self, scope, x):
-        input_dim = x.get_shape()[2]
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+            # NOTE: project to low-dimensonal space
+            if self.fact_proj_dim > 0:
+                x = op.linear(x, dim=self.fact_proj_dim, activation_fn=None)
+            input_dim = x.get_shape()[2]
             fact_wght = op.get_variable('fact_weight',
                     shape=(input_dim))
             fact_bias = op.get_variable('fact_bias', shape=(1))
             fact_intr = op.get_variable('fact_inter',
-                    shape=(input_dim, self.fact_dim))
+                    shape=(input_dim, self.fact_intr_dim))
         l = (tf.reduce_sum(x * tf.reshape(fact_wght, [1, 1, -1]), -1)
                 + fact_bias)
         # shape: [batch, seq_len]
@@ -193,13 +201,15 @@ class CAFE(SoftmaxCrossEntropyMixin, Model):
 
     # Factoriztion
     def fact_impl2(self, scope, x):
-        input_dim = x.get_shape()[2]
         with tf.variable_scope(scope, reuse=tf.AUTO_REUSE):
+            if self.fact_proj_dim > 0:
+                x = op.linear(x, dim=self.fact_proj_dim, activation_fn=None)
+            input_dim = x.get_shape()[2]
             fact_wght = op.get_variable('fact_weight',
                     shape=(input_dim))
             fact_bias = op.get_variable('fact_bias', shape=(1))
             fact_intr = op.get_variable('fact_inter',
-                    shape=(input_dim, self.fact_dim))
+                    shape=(input_dim, self.fact_intr_dim))
         l = (tf.reduce_sum(x * tf.reshape(fact_wght, [1, 1, -1]), -1)
                 + fact_bias)
         # shape: [batch, seq_len]

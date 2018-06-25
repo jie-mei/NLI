@@ -1,6 +1,7 @@
 import typing as t
 
 import numpy as np
+import math
 import tensorflow as tf
 
 import embed
@@ -36,6 +37,10 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             x1, x2 = map(lambda x: tf.gather(embed, x), [self.x1, self.x2])
             project = lambda x: self.linear(x, self.project_dim, bias=False)
             x1, x2 = map(project, [x1, x2])
+
+            x1 = self.encode_positional_info(x1)
+            x2 = self.encode_positional_info(x2)
+
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
         with tf.variable_scope('attent') as s:
@@ -61,6 +66,21 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
                 keep_prob=1.0,
                 activation_fn=None,
                 bias=bias)
+
+    def encode_positional_info(self, x):
+        if hasattr(self, 'positional_encoding'):
+            self.positional_encoding = tf.constant(
+                data.load_positional_encoding(dim=self.project_dim, max_seq_len=100),
+                dtype=tf.float32)
+
+            sliced_encoding = tf.expand_dims(
+                tf.slice(
+                    self.positional_encoding,
+                    [0, 0],
+                    [tf.cast(tf.shape(x)[1], tf.int32), -1]),
+                0)
+            x = x * math.sqrt(self.project_dim) + sliced_encoding
+        return x
 
 
     def forward(self, 

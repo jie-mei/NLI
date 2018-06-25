@@ -379,3 +379,18 @@ def load_embeddings(data_name: str, embedding_name: str, seed: int = None):
         with open(pkl_path, 'wb') as pkl_file:
             pickle.dump(embeds, pkl_file, 4)
     return embeds
+
+
+def load_positional_encoding(dim, max_seq_len):
+    pos = np.vstack([np.arange(max_seq_len)] * dim).transpose()
+    sin = 10000 ** (np.arange(dim) / dim)
+    cos = 10000 ** ((np.arange(dim) - 1) / dim)
+    sin_encoding = np.sin(pos / sin)
+    cos_encoding = np.cos(pos / cos)
+    encoding = [sin_encoding[:, i] if i % 2 == 0 else cos_encoding[:, i] for i in range(dim)]
+    encoding = np.stack(encoding).transpose()
+    return encoding
+
+
+if __name__ == '__main__':
+    encoding = load_positional_encoding(200, 80)

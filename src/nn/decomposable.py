@@ -15,7 +15,6 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
     def __init__(self,
             embeddings: embed.IndexedWordEmbedding,
             class_num: int,
-            keep_prob: float = 0.8,
             project_dim: int = 200,
             intra_attention: bool = False,
             bias_init: float = 0,
@@ -24,7 +23,6 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self.bias_init = bias_init
-        self.keep_prob = keep_prob
         self._class_num = class_num
 
         self.keep_prob = tf.placeholder(tf.float32, shape=[])
@@ -40,6 +38,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
 
         with tf.variable_scope('attent') as s:
             sim = self.attention(x1, x2)
+            self.attent_map = sim  # for visualization
             alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
             beta  = tf.matmul(tf.nn.softmax(sim), x2)
         
@@ -123,7 +122,6 @@ class DecomposableWithCharEmbed(SoftmaxCrossEntropyMixin, Model):
     def __init__(self,
             embeddings: embed.IndexedWordEmbedding,
             class_num: int,
-            keep_prob: float = 0.8,
             project_dim: int = 200,
             intra_attention: bool = False,
             bias_init: float = 0,
@@ -136,7 +134,6 @@ class DecomposableWithCharEmbed(SoftmaxCrossEntropyMixin, Model):
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self.bias_init = bias_init
-        self.keep_prob = keep_prob
         self.char_filter_width = char_filer_width
         self.char_embed_dim = char_embed_dim
         self.char_conv_dim = char_conv_dim
@@ -155,6 +152,38 @@ class DecomposableWithCharEmbed(SoftmaxCrossEntropyMixin, Model):
                 return x
             word_embed1, word_embed2 = map(lambda x: tf.gather(word_embed, x),
                     [self.x1, self.x2])
+
+            # Character convolutional embeddings (`char_conv_dim`D)
+            char_embed = op.get_variable('char_embed',
+                    shape=(256, char_embed_dim))
+            char_filter = op.get_variable('char_filter',
+                    shape=(1, self.char_filter_width, self.char_embed_dim,
+                            self.char_conv_dim))
+            def embed_chars(x_char):
+                embed = tf.gather(char_embed, x_char)
+                # shape: [batch, seq_len, word_len, embed_dim]
+                conv = tf.nn.conv2d(embed, char_filter, [1, 1, 1, 1], 'VALID')
+                # shape: [batch, seq_len, word_len - filter_width + 1, conv_dim]
+                return tf.reduce_max(conv, 2)
+                # shape: [batch, seq_len, conv_dim]
+            char_embed1, char_embed2 = map(embed_chars, [self.char1, self.char2])
+
+            # Tag one-hot embeddings (72D)
+            def embed_tags(x_ids, x_tags, x_len):
+                x_tags *= tf.sequence_mask(x_len, tf.shape(x_tags)[1],
+                                           dtype=tf.int32)
+                # shape: [batch, seq_len]
+                tag_embed = tf.one_hot(x_tags, data.SNLI.TAGS,
+                                       dtype=tf.float32,
+                                       name='char_embed')
+                return tag_embed[:,:tf.shape(x_ids)[1]]
+            tag_embed1, tag_embed2 = map(embed_tags,
+                    *zip((self.x1, self.tag1, self.len1),
+                         (self.x2, self.tag2, self.len2)))
+
+            # Merge embeddings
+            x1 = tf.concat([word_embed1, char_embed1, tag_embed1], 2)
+            x2 = tf.concat([word_embed2, char_embed2, tag_embed2], 2)
 
             #import pdb; pdb.set_trace()
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)

@@ -15,6 +15,9 @@ from util import build
 from util.log import exec_log as log
 
 
+PAD_SYMBOL = '<PAD>'
+
+
 class Dataset(ABC):
     """
     Attributes:
@@ -29,27 +32,17 @@ class Dataset(ABC):
     """
     def __init__(self,
             mode: str,
-            word_embedding: embed.WordEmbedding = None,
             indexed_word_embedding: embed.IndexedWordEmbedding = None,
-            seed: int = None
             ) -> None:
-        # Load indexed word embedding
-        if indexed_word_embedding:
-            self.word_embedding = indexed_word_embedding
-        elif word_embedding:
-            self.word_embedding = self._init_indexed_word_embedding(
-                    word_embedding, seed)
-        else:
-            raise ValueError('Either word_embedding or indexed_word_embedding'
-                             'should be provided.')
+        self.word_embedding = indexed_word_embedding
+
         # Load data from file
-        vocab = set()  # type: t.Set[str]
         self.x1_words, self.x2_words = [], []  # type: t.List[t.List[str]], t.List[t.List[str]]
         self.x1_ids, self.x2_ids = [], []  # type: t.List[t.List[int]], t.List[t.List[int]]
         self.x1_feats, self.x2_feats = [], []  # type: t.List[t.List[t.Any]], t.List[t.List[t.Any]]
         self.labels = []  # type: t.List[t.Union[int, float]]
         def preproc(x_text_in, x_feats_in, x_words_out, x_ids_out, x_feats_out):
-            words = self._tokenize(x_text_in)
+            words = self.tokenize(x_text_in)
             x_words_out.append(words)
             x_ids_out.append([self.word_embedding.get_id(w) for w in words])
             x_feats_out.append(x_feats_in)
@@ -58,26 +51,9 @@ class Dataset(ABC):
             preproc(text2, feats2, self.x2_words, self.x2_ids, self.x2_feats)
             self.labels.append(label)
 
-    @property
-    def seed(self):
-        return self.word_embedding.seed
-
     @classmethod
-    def _init_indexed_word_embedding(cls,
-            word_embedding: embed.WordEmbedding,
-            seed: int
-            )-> embed.IndexedWordEmbedding:
-        vocab = set()  # type: t.Set[str]
-        for mode in ['train', 'validation', 'test']:
-            for s1, s2, label, _, _ in cls.parse(mode):
-                vocab.update(cls._tokenize(s1))
-                vocab.update(cls._tokenize(s2))
-        return embed.IndexedWordEmbedding(vocab, word_embedding,
-                lambda w: cls._oov_assign(w, word_embedding.dim), seed)
-
-    @classmethod
-    def _tokenize(cls, sentence: str) -> t.List[str]:
-        """ A tokenization function for parsing the input text.
+    def tokenize(cls, sentence: str) -> t.List[str]:
+        """ A tokenization function for tokenizing the input text.
 
         The returning word list will be feed into the model. This method will be
         called by other methods. Thus, preprocessing steps, e.g. filtering or
@@ -86,7 +62,17 @@ class Dataset(ABC):
         return nltk.word_tokenize(sentence)
 
     @classmethod
-    def _oov_assign(cls, word: str, dim: int) -> np.array:
+    @abstractmethod
+    def parse(cls, mode: str) \
+            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
+                           None,
+                           None]:
+        """ A parsing function for extracting texts and label of each record
+        from the data file. """
+        pass
+
+    @classmethod
+    def oov_assign(cls, word: str, dim: int) -> np.array:
         """ Return a embedding vector for an OOV word.
 
         Different assignment functions can be applied by overriding this method.
@@ -99,33 +85,25 @@ class Dataset(ABC):
     _OOV = None
 
     @classmethod
-    @abstractmethod
-    def parse(cls, mode: str) \
-            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
-                           None,
-                           None]:
-        """ Parse texts and label of each record from the data file. """
-        pass
-
-
-class MSRP(Dataset):
-    DATA_FILES = {'train':      ['data/MSRP/MSRP-train.tsv',
-                                 'data/MSRP/MSRP-dev.tsv'],
-                  'validation': ['data/MSRP/MSRP-dev.tsv'],
-                  'test':       ['data/MSRP/MSRP-test.tsv'],
-                  }
-
-    @classmethod
-    def parse(cls, mode: str) \
-            -> t.Generator[t.Tuple[str, str, t.Union[int, float], t.Any, t.Any],
-                           None,
-                           None]:
-        for data_file in cls.DATA_FILES[mode]:
-            with open(data_file, 'r', encoding='utf-8') as f:
-                f.readline()  # skip the heading line
-                for line in f:
-                    label, _, _, s1, s2 = line[:-1].split('\t')
-                    yield s1, s2, int(label), _, _
+    def init_indexed_word_embedding(cls,
+            word_embedding: embed.WordEmbedding,
+            )-> embed.IndexedWordEmbedding:
+        """ Construct an indexed word embedding for the dataset.
+        
+        This function uses the `parse`, `tokenize`, and `oov_assign` functions
+        of the class. """
+        word_set = set()  # type: t.Set[str]
+        for mode in ['train', 'validation', 'test']:
+            for s1, s2, label, _, _ in cls.parse(mode):
+                word_set.update(cls.tokenize(s1))
+                word_set.update(cls.tokenize(s2))
+        if '' in word_set:
+            raise ValueError
+        # NOTE: The seqeunce padding symbol should have ID 0 in tensorflow by
+        # default.
+        vocab = [PAD_SYMBOL] + sorted(list(word_set))
+        return embed.IndexedWordEmbedding(vocab, word_embedding,
+                lambda w: cls.oov_assign(w, word_embedding.dim))
 
 
 class ParseTree:
@@ -236,7 +214,7 @@ class SNLI(Dataset):
         super(SNLI, self).__init__(*args, **kwargs)
         self.tags = {}  # type: t.Dict[str, int]
         for mode in ['train', 'validation', 'test']:
-            for _, _, label, (_, tags1), (_, tags2) in self.parse(mode):
+            for _, _, _l, (_, tags1), (_, tags2) in self.parse(mode):
                 for tag in tags1 + tags2:
                     if tag not in self.tags:
                         # Starts tag ID at 1 to differenciate with the zero
@@ -275,13 +253,21 @@ class SNLI(Dataset):
                         yield (s1, s2, label, [temp1, tags1], [temp2, tags2])
 
     @classmethod
-    def _tokenize(cls, sentence: str) -> t.List[str]:
+    def tokenize(cls, sentence: str) -> t.List[str]:
         """ Split the tokens as the SNLI dataset has already been parsed. Pad a
         EOS symbol to the end of the sentence. """
         return sentence.split()# + ['<EOS>']
 
     @classmethod
-    def _oov_assign(cls, word: str, dim: int) -> np.array:
+    def _gen_random_embed(cls, dim):
+        """ Generate an embedding vector of Gausian distributed value with 0
+        mean and 0.1 standard deviation. The return value takes its l2-norm
+        form. """
+        embed = np.random.randn(1, dim).astype("float32")
+        return embed / np.linalg.norm(embed)# * 0.01
+
+    @classmethod
+    def oov_assign(cls, word: str, dim: int) -> np.array:
         """ Assign one of 100 randomly generated vector to each OOV word.
 
         same embedding vector.
@@ -305,13 +291,12 @@ class SNLI(Dataset):
     _OOV_EMBEDS = []  # type: t.List[np.array]
     _OOV_MAP = {}  # type: t.Dict[str, np.array]
 
+
+class SNLI_WRAP(SNLI):
+
     @classmethod
-    def _gen_random_embed(cls, dim):
-        """ Generate an embedding vector of Gausian distributed value with 0
-        mean and 0.1 standard deviation. The return value takes its l2-norm
-        form. """
-        embed = (np.random.randn(1, dim) * 0.1).astype("float32")
-        return embed / np.linalg.norm(embed)
+    def tokenize(cls, sentence: str) -> t.List[str]:
+        return ['<BOS>'] + sentence.split() + ['<EOS>']
 
 
 def load_dataset(
@@ -336,9 +321,11 @@ def load_dataset(
     else:
         log.info('Build %s %s dataset' % (data_name, data_mode))
         embedding = load_embeddings(data_name, embedding_name, seed)
+        if seed:
+            log.debug('Set numpy random seed to %d' % seed)
+            np.random.seed(seed)
         dataset = globals()[data_name](data_mode,
-                indexed_word_embedding=embedding,
-                seed=seed)
+                indexed_word_embedding=embedding)
         os.makedirs(os.path.normpath(os.path.join(pkl_path, os.pardir)),
                     exist_ok=True)
         log.info('Serialize %s %s dataset to file %s.' %
@@ -367,10 +354,12 @@ def load_embeddings(data_name: str, embedding_name: str, seed: int = None):
         with open(pkl_path, 'rb') as pkl_file:
             embeds = pickle.load(pkl_file)
     else:
+        if seed:
+            log.debug('Set numpy random seed to %d' % seed)
+            np.random.seed(seed)
         log.info('Build corpus-specific indexed word embedding.')
-        vocab = set()  # type: t.Set[str]
-        embeds = globals()[data_name]._init_indexed_word_embedding(
-                embed.init(embedding_name), seed)
+        embeds = globals()[data_name].init_indexed_word_embedding(
+                embed.init(embedding_name))
         # Serialize for reusing
         log.info('Save corpus-specific indexed word embedding to file: %s.'
                  % pkl_path)

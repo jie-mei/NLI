@@ -14,7 +14,6 @@ import sklearn
 import tensorflow as tf
 import tqdm
 
-import embed
 import data
 import nn
 from util import build, parse, graph
@@ -423,6 +422,8 @@ def test(name: str,
          data_embedding: str = 'GloVe',
          data_pad: bool = True,
          batch_size: int = 10,
+         print_errors: bool = False,
+         print_errors_limit: int = 10,
          **kwargs,
          ) -> None:
     model_path = build.get_model_path(name)
@@ -435,11 +436,12 @@ def test(name: str,
               '\n\t'.join(graph.print_trainable_variables().split('\n')))
 
     with tf.Session(config=_make_config()) as sess:
+        dataset = data.load_dataset(data_name, mode, data_embedding, data_seed)
+
         data_iter, data_hd = _make_dataset_iterator(
                 type_name='initializable_iterator',
                 handle_name='data_handle',
-                dataset=data.load_dataset(
-                        data_name, mode, data_embedding, data_seed),
+                dataset=dataset,
                 batch_size=batch_size,
                 shuffle=False,
                 pad=data_pad,
@@ -460,8 +462,37 @@ def test(name: str,
             except tf.errors.OutOfRangeError:
                 break
 
-    # accuracy
+    # print accuracy
     print('Acc: %.4f' % sklearn.metrics.accuracy_score(y_trues, y_preds))
+
+    # Print confusion matrix
+    labels = list(sorted(data.SNLI.LABELS.keys(),
+                         key=lambda x: data.SNLI.LABELS[x]))
+    cm = sklearn.metrics.confusion_matrix(y_trues, y_preds,
+                                          labels=range(len(labels)))
+    tmpl = '%15s ' * (len(labels) + 2)
+    print(tmpl % tuple([''] + labels + ['']))
+    corr = 0
+    for i in range(len(labels)):
+        stats = cm[i]
+        prob = stats[i] / sum(stats)
+        corr += stats[i]
+        print(tmpl % tuple([labels[i]] + list(map(str, cm[i])) + ['%.4f' % prob]))
+    print(tmpl % tuple(['%d / %d' % (corr, len(y_trues))] +
+                       [''] * len(labels) +
+                       ['%.4f' % (corr / len(y_trues))]))
+
+    # Print errors
+    if print_errors:
+        tmpl = '\n%4d. Pred: %-20s  True: %s\n      %s\n      %s'
+        for i, (y_pred, y_true) in enumerate(zip(y_preds, y_trues)):
+            if y_pred != y_true and print_errors_limit != 0:
+                s1 = ' '.join(dataset.x1_words[i])
+                s2 = ' '.join(dataset.x2_words[i])
+                l_pred = labels[y_pred]
+                l_true = labels[y_true]
+                print(tmpl % (i, l_pred, l_true, s1, s2))
+                print_errors_limit -= 1
 
 
 if __name__ == "__main__":

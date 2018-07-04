@@ -1,0 +1,31 @@
+model:
+  model_type: CAFE
+  class_num: 3
+  #scale_l2: 0.00001
+  fact_intr_dim: 25
+  fact_proj_dim: 100
+
+data:
+  name: SNLI_WRAP
+  embedding: GloVeNorm
+  seed: 6523
+
+train:
+  data:
+    cache: True
+    argument: False
+  #restore:
+  #  from: CAFE.fact300
+  #  step: 500000
+  epoch_num: 100
+  batch_size: 16
+  keep_prob: 0.8
+  seed: 1234
+  record_every: 200
+  validate_every: 2000
+  save_every: 20000
+  optim_manager:
+    type: NotChange
+  optim:
+    optim_type: AdamOptimizer
+    learning_rate: 0.0003

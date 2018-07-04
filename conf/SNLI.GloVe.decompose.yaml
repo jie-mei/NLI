@@ -4,7 +4,7 @@ model:
 
 data:
   name: SNLI
-  embedding: GloVeNorm
+  embedding: GloVe
   seed: 6523
 
 train:
@@ -18,5 +18,5 @@ train:
   optim_manager:
     type: NotChange
   optim:
-    optim_type: AdagradOptimizer
+    optim_type: AdamOptimizer
     learning_rate: 0.001

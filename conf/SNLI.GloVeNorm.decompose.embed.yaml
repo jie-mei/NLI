@@ -19,4 +19,4 @@ train:
     type: NotChange
   optim:
     optim_type: AdamOptimizer
-    learning_rate: 0.00005
+    learning_rate: 0.001

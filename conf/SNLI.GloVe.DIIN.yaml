@@ -1,0 +1,45 @@
+model:
+  model_type: DIIN
+  class_num: 3
+  #scale_l2: 0.00001
+  scale_l2: 0.0001
+  #scale_l2: 0.001
+
+data:
+  name: SNLI
+  embedding: GloVe
+  seed: 6523
+
+train:
+  data:
+    cache: True
+    argument: False
+  epoch_num: 100
+  batch_size: 64
+  keep_prob: 0.8
+  seed: 1234
+  record_every: 200
+  validate_every: 2000
+  save_every: 20000
+  #optim_manager:
+  #  type: ProgressCheck
+  #  avg_steps: 20000
+  #  min_delta: 0.0
+  #  patience: 5
+  #optim1:
+  #  optim_type: AdadeltaOptimizer
+  #  learning_rate: 0.5
+  #  global_step: 0
+  #  decay_steps: 10000
+  #  decay_rate: 0.977
+  #optim2:
+  #  optim_type: GradientDescentOptimizer
+  #  learning_rate: 0.0003
+  #  global_step: 0
+  #  decay_steps: 10000
+  #  decay_rate: 0.977
+  optim_manager:
+    type: NotChange
+  optim:
+    optim_type: AdamOptimizer
+    learning_rate: 0.0003

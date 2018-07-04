@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 import os
-from typing import Dict, Set, Union, Callable
+import typing as t
 
 import gensim
 from gensim.scripts.glove2word2vec import glove2word2vec
@@ -20,11 +20,9 @@ class WordEmbedding(ABC):
 
     Attributes:
         dim: The number of dimensions for each embedding vector.
-        vocab: A set of word strings.
     """
-    def __init__(self, dim: int, vocab: Set[str] = set()) -> None:
+    def __init__(self, dim: int, vocab: t.Set[str] = set()) -> None:
         self.dim = dim
-        self.vocab = vocab
 
     @abstractmethod
     def get(self, word: str) -> np.ndarray:
@@ -41,21 +39,16 @@ class IndexedWordEmbedding(WordEmbedding):
             embedding for the word with id `i`.
     """
     def __init__(self,
-                 vocab: Set[str],
+                 vocab: t.List[str],
                  embedding: WordEmbedding,
-                 oov_embed_fn: Callable[[str], np.ndarray],
-                 seed: int = None
+                 oov_embed_fn: t.Callable[[str], np.ndarray],
                  ) -> None:
-        super(IndexedWordEmbedding, self).__init__(embedding.dim, vocab)
-        if seed:
-            self.seed = seed
-            log.debug('Set numpy random seed to %d' % self.seed)
-            np.random.seed(self.seed)
+        super(IndexedWordEmbedding, self).__init__(embedding.dim)
         # Copy embeddings from the given word embedding object.
-        self.__ids, self.__embeds = {}, None  # type: Dict[str, int], np.ndarray
+        self.__ids, self.__embeds = {}, None  # type: t.Dict[str, int], np.ndarray
         self.__is_oov = [False] * len(vocab)
         if vocab:
-            self.__embeds = np.array([0] * embedding.dim)
+            embeds = []  # type: t.List[str]
             for wid, w in enumerate(vocab):
                 try:
                     embed = embedding.get(w)
@@ -63,8 +56,8 @@ class IndexedWordEmbedding(WordEmbedding):
                     embed = oov_embed_fn(w)
                     self.__is_oov[wid] = True
                 self.__ids[w] = wid
-                self.__embeds = np.vstack([self.__embeds, embed])
-            self.__embeds = self.__embeds[1:]
+                embeds.append(embed)
+            self.__embeds = np.vstack(embeds)
 
     def get_embeddings(self) -> np.ndarray:
         return self.__embeds
@@ -76,27 +69,23 @@ class IndexedWordEmbedding(WordEmbedding):
             raise type(e)(str(e) +
                     ' This embedding object is incompetible with the query.')
 
-    def __get_word_id(self, word: Union[str, int]) -> int:
+    def __get_word_id(self, word: t.Union[str, int]) -> int:
         return word if isinstance(word, int) else self.get_id(word)
 
-    def is_oov(self, word: Union[str, int]) -> bool:
+    def is_oov(self, word: t.Union[str, int]) -> bool:
         return self.__is_oov[self.__get_word_id(word)]
 
-    def get(self, word: Union[str, int]) -> np.array:
+    def get(self, word: t.Union[str, int]) -> np.array:
         return self.__embeds[self.__get_word_id(word)]
 
 
 class PretrainedEmbedding(WordEmbedding):
     """ Pretrained word embeddings. """
-    def __init__(self, path, dim, binary, lazy_initialization=False):
+    def __init__(self, path, dim, binary):
         super(PretrainedEmbedding, self).__init__(dim)
         self.path = path
         self.__binary = binary
         self.__model = None
-        if not lazy_initialization:
-            self.__load_model()
-
-    def __load_model(self):
         log.info('Read pretrained %s embedding from file: %s' %
                  (self.__class__.__name__, self.path))
         self.__model = gensim.models.KeyedVectors.load_word2vec_format(
@@ -173,6 +162,6 @@ class SpacyGloVe(WordEmbedding):
         return self.nlp.vocab.get_vector(word)
 
 
-def init(embedding_name: str, *args, **kwargs) -> WordEmbedding:
-    """ Construct a word embedding object given its name. """
+def init(embedding_name: str, *args, **kwargs) -> PretrainedEmbedding:
+    """ Construct a pretrained word embedding object given its name. """
     return globals()[embedding_name](*args, **kwargs)

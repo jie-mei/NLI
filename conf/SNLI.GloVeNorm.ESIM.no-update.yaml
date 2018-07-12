@@ -1,5 +1,5 @@
 model:
-  model_type: Decomposable
+  model_type: ESIM
   class_num: 3
 
 data:
@@ -9,14 +9,15 @@ data:
 
 train:
   data:
-    cache: True
+    cache: False
     argument: False
   epoch_num: 100
-  batch_size: 32
-  keep_prob: 0.8
+  batch_size: 128
+  keep_prob: 0.5
+  clip_norm: 10
   seed: 1234
   optim_manager:
     type: NotChange
   optim:
-    optim_type: AdagradOptimizer
-    learning_rate: 0.05
+    optim_type: AdamOptimizer
+    learning_rate: 0.001

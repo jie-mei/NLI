@@ -256,7 +256,7 @@ class SNLI(Dataset):
     def tokenize(cls, sentence: str) -> t.List[str]:
         """ Split the tokens as the SNLI dataset has already been parsed. Pad a
         EOS symbol to the end of the sentence. """
-        return sentence.split()# + ['<EOS>']
+        return ['<BOS>'] + sentence.split() + ['<EOS>']
 
     @classmethod
     def _gen_random_embed(cls, dim):
@@ -264,7 +264,7 @@ class SNLI(Dataset):
         mean and 0.1 standard deviation. The return value takes its l2-norm
         form. """
         embed = np.random.randn(1, dim).astype("float32")
-        return embed / np.linalg.norm(embed)# * 0.01
+        return embed / np.linalg.norm(embed) * 0.01
 
     @classmethod
     def oov_assign(cls, word: str, dim: int) -> np.array:
@@ -290,13 +290,6 @@ class SNLI(Dataset):
     _EOS_EMBED = None
     _OOV_EMBEDS = []  # type: t.List[np.array]
     _OOV_MAP = {}  # type: t.Dict[str, np.array]
-
-
-class SNLI_WRAP(SNLI):
-
-    @classmethod
-    def tokenize(cls, sentence: str) -> t.List[str]:
-        return ['<BOS>'] + sentence.split() + ['<EOS>']
 
 
 def load_dataset(

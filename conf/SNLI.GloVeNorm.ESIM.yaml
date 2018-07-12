@@ -1,6 +1,7 @@
 model:
-  model_type: DecomposableWithCharEmbed
+  model_type: ESIM
   class_num: 3
+  seq_len: 0
 
 data:
   name: SNLI
@@ -9,11 +10,12 @@ data:
 
 train:
   data:
-    cache: True
+    cache: False
     argument: False
   epoch_num: 100
-  batch_size: 32
-  keep_prob: 0.8
+  batch_size: 256
+  keep_prob: 0.5
+  clip_norm: 10
   seed: 1234
   optim_manager:
     type: NotChange

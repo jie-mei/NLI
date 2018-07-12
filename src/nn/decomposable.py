@@ -117,7 +117,7 @@ class Decomposable(SoftmaxCrossEntropyMixin, Model):
             return map(attent, [x1, x2])
 
 
-class DecomposableWithCharEmbed(SoftmaxCrossEntropyMixin, Model):
+class DecomposableMod(SoftmaxCrossEntropyMixin, Model):
 
     def __init__(self,
             embeddings: embed.IndexedWordEmbedding,
@@ -128,68 +128,77 @@ class DecomposableWithCharEmbed(SoftmaxCrossEntropyMixin, Model):
             char_filer_width: int = 5,
             char_embed_dim: int = 8,
             char_conv_dim: int = 100,
+            lstm_unit: int = 300,
             ) -> None:
-        super(DecomposableWithCharEmbed, self).__init__()
+        super(DecomposableMod, self).__init__()
         self._class_num = class_num
         self.project_dim = project_dim
         self.intra_attention = intra_attention
         self.bias_init = bias_init
+        self.lstm_unit = lstm_unit
         self.char_filter_width = char_filer_width
         self.char_embed_dim = char_embed_dim
         self.char_conv_dim = char_conv_dim
 
         self.keep_prob = tf.placeholder(tf.float32, shape=[])
 
-        with tf.variable_scope('embed') as s:
+        with tf.variable_scope('embed', reuse=tf.AUTO_REUSE) as s:
             # Word pretrained embeddings (300D)
             word_embed = tf.constant(embeddings.get_embeddings(),
                     dtype=tf.float32,
                     name='word_embed')
-            def embed(x):
-                x = tf.gather(word_embed, x)
-                # shape: [batch, seq_len, embed_len]
-                att = tf.expand_dims(x, 2) * tf.expand_dims(x, 3)
-                return x
             word_embed1, word_embed2 = map(lambda x: tf.gather(word_embed, x),
                     [self.x1, self.x2])
 
-            # Character convolutional embeddings (`char_conv_dim`D)
-            char_embed = op.get_variable('char_embed',
-                    shape=(256, char_embed_dim))
-            char_filter = op.get_variable('char_filter',
-                    shape=(1, self.char_filter_width, self.char_embed_dim,
-                            self.char_conv_dim))
-            def embed_chars(x_char):
-                embed = tf.gather(char_embed, x_char)
-                # shape: [batch, seq_len, word_len, embed_dim]
-                conv = tf.nn.conv2d(embed, char_filter, [1, 1, 1, 1], 'VALID')
-                # shape: [batch, seq_len, word_len - filter_width + 1, conv_dim]
-                return tf.reduce_max(conv, 2)
-                # shape: [batch, seq_len, conv_dim]
-            char_embed1, char_embed2 = map(embed_chars, [self.char1, self.char2])
-
             # Tag one-hot embeddings (72D)
+            #def embed_tags(x_ids, x_tags):
+            #    tag_weight = op.get_variable('tag_weight',
+            #                                 shape=(data.SNLI.TAGS, 1))
+            #    x_tags = x_tags[:,:tf.shape(x_ids)[1]]
+            #    return tf.gather(tag_weight, x_tags)
+            #    # shape: [batch, seq_len, 1]
+            #tag_embed1, tag_embed2 = map(embed_tags,
+            #        *zip((self.x1, self.tag1), (self.x2, self.tag2)))
             def embed_tags(x_ids, x_tags, x_len):
                 x_tags *= tf.sequence_mask(x_len, tf.shape(x_tags)[1],
                                            dtype=tf.int32)
                 # shape: [batch, seq_len]
                 tag_embed = tf.one_hot(x_tags, data.SNLI.TAGS,
                                        dtype=tf.float32,
-                                       name='char_embed')
+                                       name='tag_embed')
                 return tag_embed[:,:tf.shape(x_ids)[1]]
             tag_embed1, tag_embed2 = map(embed_tags,
                     *zip((self.x1, self.tag1, self.len1),
                          (self.x2, self.tag2, self.len2)))
 
             # Merge embeddings
-            x1 = tf.concat([word_embed1, char_embed1, tag_embed1], 2)
-            x2 = tf.concat([word_embed2, char_embed2, tag_embed2], 2)
+            #x1 = tf.concat([word_embed1, char_embed1, tag_embed1], 2)
+            #x2 = tf.concat([word_embed2, char_embed2, tag_embed2], 2)
+            x1 = tf.concat([word_embed1, tag_embed1], 2)
+            x2 = tf.concat([word_embed2, tag_embed2], 2)
+            #x1 = word_embed1 * tag_embed1
+            #x2 = word_embed2 * tag_embed2
 
             #import pdb; pdb.set_trace()
             x1, x2 = self.intra(x1, x2) if intra_attention else (x1, x2)
 
+        with tf.variable_scope('encode', reuse=tf.AUTO_REUSE) as s:
+            def lstm_encode(x):
+                # shape: [batch, seq_len, embed_dim]
+                (outputs_fw, outputs_bw), (states_fw, states_bw) = \
+                        tf.nn.bidirectional_dynamic_rnn(
+                                cell_fw=tf.nn.rnn_cell.LSTMCell(self.lstm_unit),
+                                cell_bw=tf.nn.rnn_cell.LSTMCell(self.lstm_unit),
+                                inputs=x,
+                                dtype=tf.float32)
+                outputs = tf.concat([outputs_fw, outputs_bw], 2)
+                return tf.nn.dropout(outputs, self.keep_prob)
+                # shape: [batch, seq_len, embed_dim * 2]
+            x1, x2 = map(lstm_encode, [x1, x2])
+
         with tf.variable_scope('attent') as s:
-            sim = self.attention(x1, x2)
+            #sim = self.attention(x1, x2)
+            sim = tf.matmul(x1, tf.matrix_transpose(x2))
             alpha = tf.matmul(tf.nn.softmax(tf.matrix_transpose(sim)), x1)
             beta  = tf.matmul(tf.nn.softmax(sim), x2)
         

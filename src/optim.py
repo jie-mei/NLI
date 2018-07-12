@@ -33,11 +33,18 @@ def _init_optimizer(
 
 class OptimizationManager(ABC, ReprMixin):
 
-    def __init__(self, loss_op, **kwargs) -> None:
+    def __init__(self, loss_op, clip_norm, **kwargs) -> None:
         self._idx = -1
-        self._minimize_kwargs = {'loss': loss_op, **kwargs}
+        self._compute_kwargs = {'loss': loss_op, **kwargs}
+        self.clip_norm = clip_norm
         self.optims = []  # type: t.List[tf.Optimizer]
         self.optim_op = None
+
+    @property
+    def feed_lr(self):
+        """ If this optimization manager requires feeding learning rate in each
+        training step. """
+        return False
 
     @property
     def optim(self):
@@ -56,8 +63,15 @@ class OptimizationManager(ABC, ReprMixin):
         """ Set the next available optimizer for training. """
         if self.has_next():
             self._idx += 1
-            self.optim_op = (self.optim.minimize(**self._minimize_kwargs))
             log.info('Train model using %s Optimizer' % self.optim.get_name())
+            grads_tvars = self.optim.compute_gradients(**self._compute_kwargs)
+            if self.clip_norm:
+                log.info('Apply global gradient clipping with norm %f' % self.clip_norm)
+                grads = [grad for grad, tvar in grads_tvars]
+                tvars = [tvar for grad, tvar in grads_tvars]
+                grads, _ = tf.clip_by_global_norm(grads, self.clip_norm)
+                grads_tvars = zip(grads, tvars)
+            self.optim_op = self.optim.apply_gradients(grads_tvars)
 
     @abstractmethod
     def update(self, step_acc, global_step) -> None:
@@ -73,9 +87,70 @@ class NotChange(OptimizationManager):
         pass
 
 
+class LRUpdate(OptimizationManager):
+    """ Update the learning rate when the validation performance does not
+    improve upto `min_delta`.
+
+    Arguements:
+        min_delta: Progress threshold value.
+        patience: The maximum number of consequtive update check allowed before
+            a optimzer switch.
+    """
+    def __init__(self, loss_op, clip_norm, min_delta, patience, **kwargs) -> None:
+        super(LRUpdate, self).__init__(loss_op, clip_norm, **kwargs)
+        self._lr_op = []   # type: t.List[tf.Tensor]
+        self._lr_val = []  # type: t.List[float]
+        self.min_delta = min_delta
+        if patience <= 1:
+            raise ValueError('update patience should be greater than 1, got:',
+                             patience)
+        self.patience = patience
+        self._no_update_cnt = 0
+        self._max_acc = -float('inf')
+
+    @property
+    def feed_lr(self):
+        return True
+
+    def add_optimizer(self, optim_type, **kwargs):
+        if self._idx >= 1:
+            # TODO
+            raise ValueError('Only one optimizer is permitted.')
+        if 'decay_steps' in kwargs or 'decay_rate' in kwargs:
+            raise ValueError('Auto-updating learning rate is not compatible'
+                             'with exponential decay setup.')
+        self._lr_op += tf.placeholder(tf.float32, shape=[]),
+        self._lr_val += kwargs['learning_rate'],
+        return super(LRUpdate, self).add_optimizer(optim_type, **kwargs)
+
+    @property
+    def lr_op(self):
+        """ The current activating optimizer. """
+        return self._lr_op[self._idx]
+
+    @property
+    def lr_val(self):
+        """ The current activating optimizer. """
+        return self._lr_val[self._idx]
+
+    def update(self, step_acc, global_step) -> None:
+        if step_acc < self._max_acc + self.min_delta:
+            self._no_update_cnt += 1
+            log.debug('No update for %d consequtive times.' %
+                      self._no_update_cnt)
+            if self._no_update_cnt >= self.patience:
+                self._lr_val[self._idx] /= 2
+                log.info('Half the current learning rate to : %f' %
+                         self._lr_val[self._idx])
+                self._no_update_cnt = 0
+        else:
+            self._no_update_cnt = 0
+        self._max_acc = max(self._max_acc, step_acc)
+
+
 class ProgressCheck(OptimizationManager):
-    """ Switch the optimizer when average performance of the latested
-    `avg_steps` does not improve upto `min_delta`.
+    """ Switch the optimizer when average performance of the latest `avg_steps`
+    does not improve upto `min_delta`.
 
     Arguements:
         min_delta: Progress threshold value.

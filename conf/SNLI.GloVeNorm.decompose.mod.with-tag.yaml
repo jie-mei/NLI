@@ -1,5 +1,5 @@
 model:
-  model_type: Decomposable
+  model_type: DecomposableMod
   class_num: 3
 
 data:
@@ -15,8 +15,9 @@ train:
   batch_size: 32
   keep_prob: 0.8
   seed: 1234
+  clip_norm: 10
   optim_manager:
     type: NotChange
   optim:
-    optim_type: AdagradOptimizer
-    learning_rate: 0.05
+    optim_type: AdamOptimizer
+    learning_rate: 0.0001

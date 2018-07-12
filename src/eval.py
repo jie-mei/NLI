@@ -16,6 +16,7 @@ import tqdm
 
 import data
 import nn
+import optim
 from util import build, parse, graph
 from util.log import exec_log as log
 
@@ -159,10 +160,10 @@ def _search_var_list(var_regex_list: t.Union[t.List[str], str]):
         return var_list
 
 
-def _make_optim_manager(optim_manager_type, loss_op, train_regex_list, kwargs):
-    om = getattr(nn.optim, optim_manager_type)(
-            loss_op=loss_op,
-            var_list=_search_var_list(train_regex_list),
+def _make_optim_manager(optim_manager_type, loss_op, clip_norm,
+        train_regex_list, kwargs):
+    om = getattr(optim, optim_manager_type)(loss_op, clip_norm,
+            var_list=_search_var_list(train_regex_list),  # None for all vars.
             **_select_kwargs_regex(kwargs,
                     regex=r'^optim_manager(?!_type)',
                     start=14))
@@ -203,7 +204,8 @@ def _iterate_dataset(session, model, iterator, handle, summary_writer, step):
         try:
             true, pred = session.run([model.y, model.prediction],
                     feed_dict={model.handle: handle,
-                               model.keep_prob: 1.0})  # disable dropout
+                               model.keep_prob: 1.0,
+                               model.is_training: False})  # disable dropout
             y_preds += pred,
             y_trues += true,
         except tf.errors.OutOfRangeError:
@@ -225,7 +227,8 @@ def _profile_and_exit(session, model, optimizer, handle):
     for i in range(5):
         session.run([optimizer],
                 feed_dict={model.handle: handle,
-                           model.keep_prob: 1.0},
+                           model.keep_prob: 1.0,
+                           model.is_training: True},
                 options=tf.RunOptions(trace_level=tf.RunOptions.FULL_TRACE),
                 run_metadata=run_metadata)
         tl = timeline.Timeline(run_metadata.step_stats)
@@ -271,12 +274,13 @@ def train(name: str,
           data_pad: bool = True,
           data_cache: bool = False,
           data_seed: int = None,
-          record_every: int = 1000,
-          validate_every: int = 10000,
-          save_every: int = 100000,
+          record_every: int = 64000,
+          validate_every: int = 640000,
+          save_every: int = 6400000,
           restore_from: str = None,
           restore_step: int = None,
           profiling: bool = False,
+          clip_norm: int = None,
           seed: int = None,
           debug: bool = False,
           **kwargs
@@ -340,7 +344,7 @@ def train(name: str,
                 cache=True,
                 **dataset_opts)
 
-        om = _make_optim_manager(optim_manager_type, model.loss,
+        om = _make_optim_manager(optim_manager_type, model.loss, clip_norm,
                 train_regex_list, kwargs)
 
         test_wtr = tf.summary.FileWriter(os.path.join(model_path, 'test'))
@@ -352,7 +356,6 @@ def train(name: str,
             valid_wtr[optim.get_name()] = tf.summary.FileWriter(
                     os.path.join(model_path, 'valid-%s' % optim.get_name()))
 
-        step = 1
         if restore_from:
             _copy_checkpoint(restore_from, model_path, restore_step)
             _restore_model(sess, model_path, restore_step)
@@ -361,30 +364,31 @@ def train(name: str,
             _iterate_dataset(sess, model, valid_iter, valid_hd,
                     valid_wtr[om.optim.get_name()], step)
             _iterate_dataset(sess, model, test_iter, test_hd, test_wtr, step)
-            step += 1
         else:
             sess.run(tf.global_variables_initializer())
-            step = 1
+            step = 0
 
         if profiling:
             _profile_and_exit(sess, model, om.optim_op, train_hd)
 
-        pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
+        pbar = tqdm.tqdm(total=save_every, desc='Train', unit=' inst')
         try:
             while True:
+                feed_dict={model.handle: train_hd,
+                           model.keep_prob: keep_prob,
+                           model.is_training: True}
+                if om.feed_lr:
+                    feed_dict[om.lr_op] = om.lr_val
                 if step % record_every == 0:
                     summary, _, loss = sess.run(
                             [train_summary, om.optim_op, model.loss],
-                            feed_dict={model.handle: train_hd,
-                                       model.keep_prob: keep_prob})
+                            feed_dict=feed_dict)
                     pbar.set_postfix(loss='{:.3f}'.format(loss))
                     train_wtr.add_summary(summary, step)
                 else:
-                    sess.run([om.optim_op],
-                             feed_dict={model.handle: train_hd,
-                                        model.keep_prob: keep_prob})
+                    sess.run([om.optim_op], feed_dict=feed_dict)
 
-                if step % validate_every == 0:
+                if step and step % validate_every == 0:
                     pbar.set_description('Valid')
                     valid_acc = _iterate_dataset(
                             sess, model, valid_iter, valid_hd,
@@ -396,16 +400,16 @@ def train(name: str,
                             sess, model, test_iter, test_hd, test_wtr, step)
                     pbar.set_description('Train')
 
-                if step % save_every == 0:
+                if step and step % save_every == 0:
                     save_path = _save_model(sess, model_path, step)
                     pbar.set_description(save_path)
-                    pbar.update(1)
+                    pbar.update(batch_size)
                     pbar.close()
-                    pbar = tqdm.tqdm(total=save_every, desc='Train', unit='batch')
+                    pbar = tqdm.tqdm(total=save_every, desc='Train', unit=' inst')
                 else:
-                    pbar.update(1)
+                    pbar.update(batch_size)
 
-                step += 1
+                step += batch_size
 
         except tf.errors.OutOfRangeError:
             save_path = _save_model(sess, model_path, step)
@@ -456,7 +460,8 @@ def test(name: str,
                 true, pred = sess.run(
                         [model.y, model.prediction],
                         feed_dict={model.handle: data_hd,
-                                   model.keep_prob: 1.0})
+                                   model.keep_prob: 1.0,
+                                   model.is_training: False})
                 y_preds.extend(np.squeeze(pred).tolist())
                 y_trues.extend(np.squeeze(true).tolist())
             except tf.errors.OutOfRangeError:

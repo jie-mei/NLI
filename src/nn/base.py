@@ -46,6 +46,9 @@ class Model(ReprMixin, ABC):
         self.tag1  = tf.identity(iter_next[9],  name='tag1')
         self.tag2  = tf.identity(iter_next[10], name='tag2')
 
+        self.keep_prob = tf.placeholder(tf.float32, shape=[])
+        self.is_training = tf.placeholder(tf.bool, shape=[])
+
     def count_parameters(self):
         total = 0
         for var in tf.trainable_variables():

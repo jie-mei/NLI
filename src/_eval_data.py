@@ -30,15 +30,25 @@ def print_embed(data_cls, mode, embed_cls, seed):
         _print_word_embed(dataset, '<EOS>')
     if '<BOS>' in embed._IndexedWordEmbedding__ids:
         _print_word_embed(dataset, '<BOS>')
+
+
+def print_tag(data_cls, mode, embed_cls, seed):
+    dataset = data.load_dataset(data_cls, mode, embed_cls, seed)
+    for i in range(3):
+        words = dataset.x2_words[i]
+        tags = dataset.x2_feats[i][1]
+        print([(w, t) for w, t in zip(words, tags)])
     
 
 
 if __name__ == '__main__':
     # Print 
-    print_embed('SNLI', 'test', 'GloVe', 6523)
+    print_tag('SNLI', 'test', 'GloVe', 6523)
     print()
-    print_embed('SNLI', 'test', 'GloVeNorm', 6523)
+    print_tag('SNLI', 'test', 'GloVeNorm', 6523)
     print()
-    print_embed('SNLI', 'train', 'GloVeNorm', 6523)
+    print_tag('SNLI', 'train', 'GloVeNorm', 6523)
+    print()
+    print()
     print()
 

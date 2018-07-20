@@ -1,7 +1,6 @@
 model:
   model_type: ESIM
   class_num: 3
-  seq_len: 24
 
 data:
   name: SNLI

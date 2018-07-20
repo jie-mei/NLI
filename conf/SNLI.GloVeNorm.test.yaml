@@ -8,11 +8,13 @@ data:
   seed: 6523
 
 train:
+  record_every: 3200
   data:
     cache: False
     argument: False
   epoch_num: 100
-  batch_size: 128
+  #batch_size: 128
+  batch_size: 32
   keep_prob: 0.5
   clip_norm: 10
   seed: 1234

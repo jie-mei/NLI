@@ -76,3 +76,23 @@ class SoftmaxCrossEntropyMixin(ABC):
             rglz_loss = tf.reduce_sum(tf.get_collection(
                     tf.GraphKeys.REGULARIZATION_LOSSES))
             self.loss = tf.add(ce_loss, rglz_loss)
+
+
+class WeightedSoftmaxCrossEntropyMixin(ABC):
+
+    def evaluate_and_loss(self, y_hat, y_weights):
+        with tf.name_scope('predict'):
+            probs = tf.nn.softmax(y_hat)
+            self.prediction = tf.argmax(probs, axis=1, output_type=tf.int32)
+        with tf.name_scope('accuracy'):
+            self.performance = tf.reduce_mean(
+                    tf.cast(tf.equal(self.prediction, self.y), tf.float32))
+        with tf.name_scope('loss'):
+            y_w = tf.constant(y_weights, dtype=tf.float32, name='class_weights')
+            #labels = tf.one_hot(self.y, self._class_num, dtype=tf.float32)
+            ce_loss = tf.reduce_mean(
+                    tf.nn.sparse_softmax_cross_entropy_with_logits(
+                            logits=y_hat * y_w, labels=self.y))
+            rglz_loss = tf.reduce_sum(tf.get_collection(
+                    tf.GraphKeys.REGULARIZATION_LOSSES))
+            self.loss = tf.add(ce_loss, rglz_loss)

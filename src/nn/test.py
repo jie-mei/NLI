@@ -25,12 +25,15 @@ class Test(SoftmaxCrossEntropyMixin, Model):
         self.scale_l2 = scale_l2
         self.lstm_unit = lstm_unit
 
+        self.batch_size = tf.shape(self.x1)[0]
+        self.embed_dim = embeddings.get_embeddings().shape[-1]
         self.keep_prob = tf.placeholder(tf.float32, shape=[])
-
-        op_kwargs = {'scale_l1': self.scale_l1,
-                     'scale_l2': self.scale_l2,
-                     'keep_prob': self.keep_prob,
-                     'drop_after': False}
+        self.op_var_kwargs = {'scale_l1': self.scale_l1,
+                              'scale_l2': self.scale_l2}
+        self.op_kwargs = {'scale_l1': self.scale_l1,
+                          'scale_l2': self.scale_l2,
+                          'keep_prob': self.keep_prob,
+                          'drop_after': False}
 
         with tf.variable_scope('embed') as s:
             #embed_init_var = embeddings.get_embeddings()
@@ -61,7 +64,7 @@ class Test(SoftmaxCrossEntropyMixin, Model):
             # shape: [batch, seq_len, embed_dim * 8]
 
         with tf.variable_scope('decode', reuse=tf.AUTO_REUSE) as s:
-            x1, x2 = map(lambda x: op.linear(x, dim=embed_dim, **op_kwargs),
+            x1, x2 = map(lambda x: op.linear(x, embed_dim, **self.op_kwargs),
                          [x1, x2])
             # NOTE: dropout here in the author's code
             # shape: [batch, seq_len, embed_dim]
@@ -75,14 +78,15 @@ class Test(SoftmaxCrossEntropyMixin, Model):
                          tf.reduce_max(x, axis=1)
                      ], 1)
             y_hat = op.linear(tf.concat([pool(x1), pool(x2)], 1),
+                    dim=embed_dim, 
                     activation_fn=tf.nn.tanh,
                     scope='linear-1',
-                    **op_kwargs)
+                    **self.op_kwargs)
             # shape: [batch, embed_dim * 8]
             y_hat = op.linear(y_hat, dim=self._class_num, 
                     activation_fn=None,
                     scope='linear-2',
-                    **op_kwargs)
+                    **self.op_kwargs)
             # shape: [batch, class_num]
 
         self.evaluate_and_loss(y_hat)
@@ -153,6 +157,7 @@ class Test(SoftmaxCrossEntropyMixin, Model):
                 # shape: [batch, temp_size, embed_dim]
                 c_tag = tf.gather_nd(tag, c_idx)
                 c_tag = tf.cast(c_tag, tf.int32)  # NOTE: restore type
+                #c_tag = tf.Print(c_tag, [i, c_idx, c_tag, p_tag], message='i, c_idx, c_tag, p_tag', first_n=20, summarize=10)
                 # shape: [batch, temp_size]
                 p_embed = self.merge_fn(c_embed, c_tag, p_tag)
                 tree += tf.scatter_nd(
@@ -171,4 +176,49 @@ class Test(SoftmaxCrossEntropyMixin, Model):
             c_tags: tf.Tensor,    # 2D: [batch, temp_size]
             p_tags: tf.Tensor     # 1D: [batch]
             )-> tf.Tensor:        # 2D: [batch, embed_dim]
-        return tf.reduce_mean(c_embeds, axis=1)
+        temp_size = data.SNLI.TEMP_DROP_VAL
+        fact_dim = 10
+
+        tag_c_wght = op.get_variable('tag_child_weights',
+                shape=[data.SNLI.TAGS, self.embed_dim * fact_dim],
+                **self.op_var_kwargs)
+        c_wght = tf.gather(tag_c_wght, c_tags)
+        # shape: [batch, temp_size, embed_dim * fact_dim]
+        c_wght = tf.reshape(c_wght, [
+                self.batch_size, temp_size * self.embed_dim, fact_dim])
+        # shape: [batch, temp_size * embed_dim, fact_dim]
+
+        #tag_c_bias = op.get_variable('tag_child_biases',
+        #        shape=[data.SNLI.TAGS, fact_dim],
+        #        **self.op_var_kwargs)
+        #c_bias = tf.gather(tag_c_bias, c_tags)
+        # shape: [batch, temp_size, fact_dim]
+        #c_bias = tf.reshape(c_bias, [self.batch_size, temp_size * fact_dim])
+        # shape: [batch, temp_size, fact_dim]
+
+        tag_p_wght = op.get_variable('tag_parent_weights',
+                shape=[data.SNLI.TAGS, self.embed_dim * fact_dim],
+                **self.op_var_kwargs)
+        p_wght = tf.gather(tag_p_wght, p_tags)
+        # shape: [batch, embed_dim * fact_dim]
+        p_wght = tf.reshape(p_wght, [self.batch_size, self.embed_dim, fact_dim])
+        # shape: [batch, embed_dim, fact_dim]
+
+        #tag_p_bias = op.get_variable('tag_parent_biases',
+        #        shape=[data.SNLI.TAGS, fact_dim, 1],
+        #        **self.op_var_kwargs)
+        #c_bias = tf.gather(tag_p_bias, c_tags)
+        # shape: [batch, fact_dim, 1]
+
+        w = tf.einsum('bik,bjk->bij', c_wght, p_wght)
+        # shape: [batch, temp_size * embed_dim, embed_dim]
+        #b = tf.einsum('bik,bjk->bij', c_wght, p_wght)
+        # shape: [batch, embed_dim, 1]
+
+        x = tf.reshape(c_embeds, [self.batch_size, temp_size * self.embed_dim, 1])
+        # shape: [batch, temp_size * embed_dim, 1]
+
+        y = tf.einsum('bki,bkj->bij', w, x)
+        # shape: [batch, embed_dim, 1]
+
+        return tf.squeeze(y, [-1])
